@@ -1,4 +1,4 @@
-name: Descobrir origem do jogo
+name: Localizar codigo do jogo
 
 on:
   workflow_dispatch:
@@ -11,48 +11,72 @@ jobs:
       - name: Baixar projeto
         uses: actions/checkout@v5
 
-      - name: Analisar index.html
+      - name: Instalar ferramentas
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl
+
+      - name: Analisar site do jogo
+        shell: bash
         run: |
           echo "========================================"
-          echo "CONTEUDO DO INDEX.HTML"
+          echo "ANALISANDO CARGA DUTRA"
           echo "========================================"
 
-          cat index.html
+          URL="https://cargadutra.netlify.app/"
 
-      - name: Procurar recursos externos
+          echo ""
+          echo "Pagina principal:"
+          curl -L -s "$URL" -o /tmp/index.html
+
+          echo ""
+          echo "Tamanho:"
+          wc -c /tmp/index.html
+
+          echo ""
+          echo "========================================"
+          echo "CONTEUDO DA PAGINA"
+          echo "========================================"
+
+          cat /tmp/index.html
+
+      - name: Encontrar arquivos JavaScript
         shell: bash
         run: |
           echo ""
           echo "========================================"
-          echo "SCRIPTS EXTERNOS"
-          echo "========================================"
-
-          grep -niE \
-            '<script|src=|iframe|frame|embed|object|import|module' \
-            index.html 2>/dev/null || true
-
-          echo ""
-          echo "========================================"
-          echo "URLS ENCONTRADAS"
+          echo "ARQUIVOS JAVASCRIPT"
           echo "========================================"
 
           grep -oE \
-            'https?://[^"'\'' <>]+' \
-            index.html 2>/dev/null \
-            | sort -u || true
+            '<script[^>]+src=["'\''][^"'\'']+["'\'']' \
+            /tmp/index.html 2>/dev/null \
+            || true
 
-      - name: Procurar arquivos JavaScript no projeto
+          echo ""
+          echo "========================================"
+          echo "URLS JAVASCRIPT"
+          echo "========================================"
+
+          grep -oE \
+            'https?://[^"'\'' ]+\.js[^"'\'' ]*' \
+            /tmp/index.html 2>/dev/null \
+            | sort -u \
+            || true
+
+      - name: Procurar referencias ao contador
+        shell: bash
         run: |
           echo ""
           echo "========================================"
-          echo "ARQUIVOS JS ENCONTRADOS"
+          echo "REFERENCIAS AO CONTADOR"
           echo "========================================"
 
-          find . -type f \
-            \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) \
-            ! -path './.git/*' \
-            ! -path './node_modules/*' \
-            -print
+          grep -niE \
+            'timer|countdown|elapsed|remaining|timeLeft|targetTime|formatTime|seconds|duration|setInterval' \
+            /tmp/index.html 2>/dev/null \
+            | head -100 \
+            || true
 
       - name: Final
         run: |
@@ -60,3 +84,6 @@ jobs:
           echo "========================================"
           echo "DIAGNOSTICO CONCLUIDO"
           echo "========================================"
+          echo ""
+          echo "Nenhum arquivo do jogo foi alterado."
+          echo "Nenhum APK foi gerado."
