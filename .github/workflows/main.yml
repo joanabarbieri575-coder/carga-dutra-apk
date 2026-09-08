@@ -63,8 +63,8 @@ jobs:
                   applicationId 'com.cargadutra.app'
                   minSdk 23
                   targetSdk 35
-                  versionCode 2
-                  versionName '2.0'
+                  versionCode 3
+                  versionName '3.0'
               }
           }
           EOF
@@ -79,7 +79,6 @@ jobs:
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
               <uses-permission android:name="android.permission.INTERNET"/>
 
               <application
@@ -98,7 +97,6 @@ jobs:
                       </intent-filter>
 
                   </activity>
-
               </application>
           </manifest>
           EOF
@@ -115,6 +113,7 @@ jobs:
           public class MainActivity extends Activity {
 
               private WebView web;
+              private boolean prepared = false;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -125,8 +124,8 @@ jobs:
                   WebSettings settings = web.getSettings();
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
-                  settings.setMediaPlaybackRequiresUserGesture(false);
                   settings.setDatabaseEnabled(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
 
                   web.setWebViewClient(new WebViewClient() {
 
@@ -134,24 +133,29 @@ jobs:
                       public void onPageFinished(WebView view, String url) {
                           super.onPageFinished(view, url);
 
+                          if (prepared) return;
+
+                          prepared = true;
+
                           String script =
                               "(function() {" +
                               "try {" +
-                              "  const key='logistica_3d_android_save_v3';" +
-                              "  let save={};" +
-                              "  try { save=JSON.parse(localStorage.getItem(key)||'{}'); } catch(e) {}" +
-                              "  save.unlockedLevel=30;" +
-                              "  save.currentLevel=30;" +
-                              "  save.totalDeliveries=999999;" +
-                              "  save.unlockedVehicles=save.unlockedVehicles||['standard'];" +
-                              "  for(let i=1;i<=30;i++) {" +
-                              "    if(!Array.isArray(save.levels)) save.levels=[];" +
-                              "    if(!save.levels[i-1]) save.levels[i-1]={};" +
-                              "    save.levels[i-1].levelId=i;" +
-                              "    save.levels[i-1].completed=true;" +
-                              "    save.levels[i-1].stars=3;" +
-                              "  }" +
-                              "  localStorage.setItem(key,JSON.stringify(save));" +
+                              "const key='logistica_3d_android_save_v3';" +
+                              "let save={};" +
+                              "try { save=JSON.parse(localStorage.getItem(key)||'{}'); } catch(e) {}" +
+                              "save.unlockedLevel=30;" +
+                              "save.currentLevel=1;" +
+                              "save.totalDeliveries=999999;" +
+                              "if(!Array.isArray(save.levels)) save.levels=[];" +
+                              "for(let i=1;i<=30;i++) {" +
+                              "if(!save.levels[i-1]) save.levels[i-1]={};" +
+                              "save.levels[i-1].levelId=i;" +
+                              "save.levels[i-1].completed=true;" +
+                              "save.levels[i-1].stars=3;" +
+                              "save.levels[i-1].bestScore=999999;" +
+                              "}" +
+                              "localStorage.setItem(key,JSON.stringify(save));" +
+                              "location.reload();" +
                               "} catch(e) {}" +
                               "})();";
 
@@ -160,7 +164,6 @@ jobs:
                   });
 
                   web.loadUrl("https://cargadutra.netlify.app/");
-
                   setContentView(web);
               }
           }
@@ -177,5 +180,5 @@ jobs:
       - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
-          name: carga-dutra-apk-modificado
+          name: carga-dutra-apk-fases
           path: app/build/outputs/apk/debug/app-debug.apk
