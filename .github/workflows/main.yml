@@ -1,4 +1,4 @@
-name: Encontrar origem do hud elapsed
+name: Encontrar Simulator e getHUD
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
             "https://cargadutra.netlify.app/" \
             -o /tmp/index.html
 
-      - name: Decodificar todos os modulos internos
+      - name: Decodificar módulos
         run: |
           python3 <<'PY'
           import re
@@ -27,25 +27,13 @@ jobs:
               errors="ignore"
           ).read()
 
-          # Primeiro script
           scripts = re.findall(
               r'<script[^>]+src=["\']([^"\']+)["\']',
               html,
               re.I
           )
 
-          principal = None
-
-          for src in scripts:
-              if src.startswith("data:text/javascript"):
-                  principal = src
-                  break
-
-          if not principal:
-              print("ERRO: script principal nao encontrado.")
-              raise SystemExit(0)
-
-          def decode_data_url(url):
+          def decode(url):
               try:
                   header, data = url.split(",", 1)
                   data = urllib.parse.unquote(data)
@@ -57,91 +45,80 @@ jobs:
                       )
 
                   return data
-
-              except Exception as e:
-                  print("Falha ao decodificar:", e)
+              except:
                   return ""
 
-          principal_js = decode_data_url(principal)
+          principal = None
 
-          # Guarda o principal
-          open(
-              "/tmp/game.js",
-              "w",
-              encoding="utf-8"
-          ).write(principal_js)
+          for src in scripts:
+              if src.startswith("data:text/javascript"):
+                  principal = src
+                  break
 
-          # Procura TODOS os imports data:text/javascript
-          modulos = re.findall(
-              r'from\s+[\'"]?(data:text/javascript[^\'"\s]+)',
+          if not principal:
+              print("ERRO: modulo principal nao encontrado.")
+              raise SystemExit(1)
+
+          principal_js = decode(principal)
+
+          arquivos = [("principal", principal_js)]
+          fila = re.findall(
+              r'(?:from|import)\s*[\'"]?(data:text/javascript[^\'"\s]+)',
               principal_js,
               re.I
           )
 
-          # Outra forma de import
-          modulos += re.findall(
-              r'import\s*\(\s*[\'"]?(data:text/javascript[^\'"\s]+)',
-              principal_js,
-              re.I
-          )
+          vistos = set()
 
-          print("")
-          print("========================================")
-          print("MODULOS ENCONTRADOS")
-          print("========================================")
-          print("Principal:", len(principal_js), "caracteres")
-          print("Modulos internos:", len(modulos))
+          while fila:
+              url = fila.pop(0)
 
-          arquivos = []
+              if url in vistos:
+                  continue
 
-          # Principal
-          arquivos.append(
-              ("principal", principal_js)
-          )
+              vistos.add(url)
 
-          for i, modulo in enumerate(modulos):
+              js = decode(url)
 
-              js = decode_data_url(modulo)
+              if not js:
+                  continue
 
-              if js:
-                  caminho = f"/tmp/modulo_{i}.js"
+              nome = f"modulo_{len(arquivos)}"
 
-                  open(
-                      caminho,
-                      "w",
-                      encoding="utf-8"
-                  ).write(js)
+              arquivos.append((nome, js))
 
-                  arquivos.append(
-                      (f"modulo_{i}", js)
-                  )
+              novos = re.findall(
+                  r'(?:from|import)\s*[\'"]?(data:text/javascript[^\'"\s]+)',
+                  js,
+                  re.I
+              )
 
-                  print(
-                      f"[OK] modulo_{i}:",
-                      len(js),
-                      "caracteres"
-                  )
+              for novo in novos:
+                  if novo not in vistos:
+                      fila.append(novo)
 
-          print("")
-          print("Total de arquivos analisados:", len(arquivos))
-
-          # Cria um arquivo único
           with open(
               "/tmp/todos_modulos.js",
               "w",
               encoding="utf-8"
-          ) as saida:
+          ) as f:
 
               for nome, js in arquivos:
-                  saida.write(
+                  f.write(
                       "\n\n/* ===== " + nome + " ===== */\n\n"
                   )
-                  saida.write(js)
+                  f.write(js)
 
-          print("Arquivo combinado criado.")
+          print("========================================")
+          print("MODULOS DECODIFICADOS")
+          print("========================================")
+          print("Total:", len(arquivos))
+
+          for nome, js in arquivos:
+              print(nome, len(js), "caracteres")
           PY
 
-      - name: Procurar getHUD e elapsed
+      - name: Encontrar Simulator
         run: |
           python3 <<'PY'
           import re
@@ -154,101 +131,59 @@ jobs:
 
           print("")
           print("========================================")
-          print("ORIGEM DE hud.elapsed")
+          print("SIMULATOR / getHUD")
           print("========================================")
 
-          termos = [
-              "getHUD",
-              "elapsed",
-              "this.elapsed",
-              "elapsed =",
-              "elapsed:",
-              "startTime",
-              "startTimestamp",
-              "performance.now",
-              "Date.now",
-              "requestAnimationFrame",
-              "update(dt)",
-              "update(delta",
-              "getElapsed"
+          padroes = [
+              r'class\s+Simulator',
+              r'getHUD\s*\(',
+              r'getHUD\s*=\s*\(',
+              r'getHUD\s*:',
+              r'elapsed\s*:',
+              r'this\.elapsed',
+              r'elapsed\s*=',
+              r'performance\.now\s*\(',
+              r'Date\.now\s*\(',
+              r'create\s*\('
           ]
 
-          resultados = []
+          encontrados = []
 
-          for termo in termos:
-
-              inicio = 0
-
-              while True:
-
-                  pos = js.lower().find(
-                      termo.lower(),
-                      inicio
+          for padrao in padroes:
+              for m in re.finditer(padrao, js, re.I):
+                  encontrados.append(
+                      (m.start(), m.group(0))
                   )
 
-                  if pos == -1:
-                      break
-
-                  resultados.append(
-                      (pos, termo)
-                  )
-
-                  inicio = pos + len(termo)
-
-          resultados.sort()
+          encontrados.sort()
 
           vistos = set()
           total = 0
 
-          for pos, termo in resultados:
+          for pos, termo in encontrados:
 
-              inicio = max(0, pos - 1000)
-              fim = min(len(js), pos + 1800)
+              inicio = max(0, pos - 1800)
+              fim = min(len(js), pos + 3500)
 
               trecho = js[inicio:fim]
 
               baixo = trecho.lower()
 
-              # Prioriza trechos realmente ligados ao contador
-              palavras = [
+              # Só mostrar trechos realmente relacionados
+              if not any(x in baixo for x in [
+                  "simulator",
                   "gethud",
-                  "elapsed",
-                  "starttime",
-                  "starttimestamp",
-                  "performance.now",
-                  "date.now",
-                  "requestanimationframe"
-              ]
-
-              if not any(
-                  palavra in baixo
-                  for palavra in palavras
-              ):
+                  "elapsed"
+              ]):
                   continue
 
-              # Limita e organiza
               trecho = re.sub(
                   r'\s+',
                   ' ',
                   trecho
               )
 
-              trecho = trecho.replace(
-                  ';',
-                  ';\n'
-              )
-
-              trecho = trecho.replace(
-                  '{',
-                  '{\n'
-              )
-
-              trecho = trecho.replace(
-                  '}',
-                  '}\n'
-              )
-
-              chave = trecho[:600]
+              chave = trecho[:1000]
 
               if chave in vistos:
                   continue
@@ -260,11 +195,11 @@ jobs:
               print("TERMO:", termo)
               print("POSICAO:", pos)
               print("----------------------------------------")
-              print(trecho[:3200])
+              print(trecho[:5000])
 
               total += 1
 
-              if total >= 30:
+              if total >= 15:
                   break
 
           print("")
@@ -273,7 +208,7 @@ jobs:
           print("========================================")
           PY
 
-      - name: Procurar constantes de tempo
+      - name: Procurar calculo do elapsed
         run: |
           python3 <<'PY'
           import re
@@ -286,22 +221,25 @@ jobs:
 
           print("")
           print("========================================")
-          print("CONSTANTES RELACIONADAS AO TEMPO")
+          print("CALCULO DO TEMPO")
           print("========================================")
 
           padroes = [
-              r'\b\d+\s*\*\s*60\b',
-              r'\b\d+\s*\*\s*1000\b',
-              r'\b\d{2,}\s*(?:[,;)}])',
-              r'timeLimit',
-              r'timeLimitSeconds',
-              r'levelTime',
-              r'maxTime',
-              r'targetTime',
-              r'elapsed'
+              r'elapsed\s*[:=]',
+              r'this\.elapsed',
+              r'elapsed\s*\+=',
+              r'elapsed\s*=\s*.*?performance',
+              r'performance\.now\(\).*?elapsed',
+              r'elapsed.*?performance\.now',
+              r'startTime',
+              r'startTimestamp',
+              r'startedAt',
+              r'timerStart',
+              r'gameTime'
           ]
 
-          encontrados = []
+          total = 0
+          vistos = set()
 
           for padrao in padroes:
 
@@ -311,67 +249,41 @@ jobs:
                   re.I
               ):
 
-                  trecho = js[
-                      max(0, m.start() - 500):
-                      min(len(js), m.end() + 700)
-                  ]
+                  inicio = max(0, m.start() - 1200)
+                  fim = min(len(js), m.end() + 2200)
 
-                  baixo = trecho.lower()
+                  trecho = js[inicio:fim]
 
-                  if any(
-                      x in baixo
-                      for x in [
-                          "time",
-                          "elapsed",
-                          "timer",
-                          "level"
-                      ]
-                  ):
-                      encontrados.append(
-                          (m.start(), m.group(0), trecho)
-                      )
+                  trecho = re.sub(
+                      r'\s+',
+                      ' ',
+                      trecho
+                  )
 
-          vistos = set()
-          total = 0
+                  chave = trecho[:900]
 
-          for pos, termo, trecho in encontrados:
+                  if chave in vistos:
+                      continue
 
-              chave = trecho[:400]
+                  vistos.add(chave)
 
-              if chave in vistos:
-                  continue
+                  print("")
+                  print("----------------------------------------")
+                  print("PADRAO:", padrao)
+                  print("POSICAO:", m.start())
+                  print("----------------------------------------")
+                  print(trecho[:3500])
 
-              vistos.add(chave)
+                  total += 1
 
-              trecho = re.sub(
-                  r'\s+',
-                  ' ',
-                  trecho
-              )
-
-              print("")
-              print("----------------------------------------")
-              print("TERMO:", termo)
-              print("POSICAO:", pos)
-              print("----------------------------------------")
-              print(trecho[:1800])
-
-              total += 1
+                  if total >= 20:
+                      break
 
               if total >= 20:
                   break
 
           print("")
-          print("Trechos mostrados:", total)
+          print("========================================")
+          print("TOTAL:", total)
+          print("========================================")
           PY
-
-      - name: Final
-        run: |
-          echo ""
-          echo "========================================"
-          echo "ANALISE CONCLUIDA"
-          echo "========================================"
-          echo ""
-          echo "O jogo ainda nao foi alterado."
-          echo "O objetivo agora e encontrar exatamente"
-          echo "como Simulator calcula hud.elapsed."
