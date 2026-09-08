@@ -1,4 +1,4 @@
-name: Identificar tecnologia do jogo
+name: Analisar contador do jogo
 
 on:
   workflow_dispatch:
@@ -8,23 +8,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Instalar ferramentas
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq curl
-
-      - name: Baixar pagina principal
+      - name: Baixar pagina do jogo
         shell: bash
         run: |
-          curl -L --max-time 30 -s \
+          curl -L --max-time 60 -s \
             "https://cargadutra.netlify.app/" \
             -o /tmp/index.html
 
-      - name: Identificar tecnologia
+          echo "Pagina baixada."
+          wc -c /tmp/index.html
+
+      - name: Decodificar JavaScript do jogo
         shell: bash
         run: |
           python3 <<'PY'
           import re
+          import base64
+          import urllib.parse
 
           html = open(
               "/tmp/index.html",
@@ -32,159 +32,271 @@ jobs:
               errors="ignore"
           ).read()
 
-          texto = html.lower()
-
-          encontrados = []
-
-          tecnologias = {
-              "React": [
-                  "react",
-                  "reactdom",
-                  "__react",
-                  "_reactroot"
-              ],
-
-              "Vite": [
-                  "vite",
-                  "@vite",
-                  "/assets/",
-                  "type=\"module\""
-              ],
-
-              "Unity": [
-                  "unityloader",
-                  "unityframework",
-                  "unityinstance",
-                  "build.loader.js",
-                  "unity",
-              ],
-
-              "Godot": [
-                  "godot",
-                  "engine.start",
-                  "godotengine"
-              ],
-
-              "Phaser": [
-                  "phaser",
-                  "phaser.js",
-                  "phaser.min.js"
-              ],
-
-              "Three.js": [
-                  "three.js",
-                  "three.min.js",
-                  "three.module.js",
-                  "webglrenderer",
-                  "three"
-              ],
-
-              "PixiJS": [
-                  "pixi.js",
-                  "pixi.min.js",
-                  "pixijs"
-              ],
-
-              "Babylon.js": [
-                  "babylon.js",
-                  "babylonjs",
-                  "babylon"
-              ],
-
-              "Angular": [
-                  "ng-version",
-                  "angular",
-                  "ng-app"
-              ],
-
-              "Vue": [
-                  "vue.js",
-                  "vue.min.js",
-                  "__vue__",
-                  "data-v-"
-              ],
-
-              "Svelte": [
-                  "svelte",
-                  "__svelte"
-              ],
-
-              "Next.js": [
-                  "__next",
-                  "_next/static",
-                  "next.js"
-              ],
-
-              "Electron": [
-                  "electron"
-              ]
-          }
-
-          for nome, termos in tecnologias.items():
-              achados = []
-
-              for termo in termos:
-                  if termo.lower() in texto:
-                      achados.append(termo)
-
-              if achados:
-                  encontrados.append(
-                      (nome, sorted(set(achados)))
-                  )
-
-          print("")
-          print("========================================")
-          print("RESULTADO DA IDENTIFICACAO")
-          print("========================================")
-          print("")
-
-          if encontrados:
-              for nome, achados in encontrados:
-                  print(f"[+] {nome}")
-                  print("    Indicadores:", ", ".join(achados))
-          else:
-              print("[?] Nenhuma tecnologia identificada diretamente")
-              print("    O jogo provavelmente carrega o motor")
-              print("    dinamicamente ou usa um bundle externo.")
-
-          print("")
-          print("========================================")
-          print("RECURSOS ENCONTRADOS")
-          print("========================================")
-
           scripts = re.findall(
               r'<script[^>]+src=["\']([^"\']+)["\']',
               html,
               re.I
           )
 
-          links = re.findall(
-              r'<link[^>]+href=["\']([^"\']+)["\']',
-              html,
-              re.I
-          )
-
-          print("")
-          print("Scripts:", len(scripts))
-
-          for src in scripts[:30]:
-              print(" -", src)
-
-          print("")
-          print("Links:", len(links))
-
-          for href in links[:30]:
-              print(" -", href)
-
           print("")
           print("========================================")
-          print("FIM DO DIAGNOSTICO")
+          print("SCRIPTS ENCONTRADOS")
           print("========================================")
+          print("Quantidade:", len(scripts))
+
+          game_js = None
+
+          for i, src in enumerate(scripts):
+              print(f"[{i}] {src[:120]}")
+
+              if src.startswith("data:text/javascript"):
+                  game_js = src
+                  break
+
+          if not game_js:
+              print("")
+              print("[ERRO] Nenhum script data:text/javascript encontrado.")
+              open("/tmp/game.js", "w").write("")
+              raise SystemExit(0)
+
+          print("")
+          print("Script do jogo encontrado.")
+
+          try:
+              header, data = game_js.split(",", 1)
+          except ValueError:
+              print("[ERRO] Formato data URL inesperado.")
+              open("/tmp/game.js", "w").write("")
+              raise SystemExit(0)
+
+          data = urllib.parse.unquote(data)
+
+          if ";base64" in header.lower():
+              try:
+                  decoded = base64.b64decode(data).decode(
+                      "utf-8",
+                      errors="ignore"
+                  )
+              except Exception as e:
+                  print("[ERRO] Falha ao decodificar Base64:", e)
+                  open("/tmp/game.js", "w").write("")
+                  raise SystemExit(0)
+          else:
+              decoded = data
+
+          open(
+              "/tmp/game.js",
+              "w",
+              encoding="utf-8"
+          ).write(decoded)
+
+          print("")
+          print("JavaScript decodificado com sucesso.")
+          print("Tamanho:", len(decoded), "caracteres")
           PY
 
-      - name: Concluido
+      - name: Procurar codigo do contador
+        shell: bash
         run: |
-          echo ""
-          echo "Diagnostico concluido com sucesso."
-          echo "Nenhum arquivo do jogo foi alterado."
-          echo "Nenhum APK foi gerado."
+          python3 <<'PY'
+          import re
+
+          js = open(
+              "/tmp/game.js",
+              encoding="utf-8",
+              errors="ignore"
+          ).read()
+
+          print("")
+          print("========================================")
+          print("ANALISE DO CONTADOR")
+          print("========================================")
+          print("")
+
+          termos = [
+              "elapsed",
+              "targetTime",
+              "formatTime",
+              "timer",
+              "countdown",
+              "remaining",
+              "timeLeft",
+              "timeRemaining",
+              "duration",
+              "seconds",
+              "setInterval",
+              "setTimeout",
+              "Date.now",
+              "performance.now",
+              "requestAnimationFrame",
+              "tempo",
+              "fase",
+              "phase",
+              "innerText",
+              "textContent",
+              "99999",
+              "9999999",
+              "60000",
+              "30000"
+          ]
+
+          encontrados = []
+
+          js_lower = js.lower()
+
+          for termo in termos:
+              pos = 0
+
+              while True:
+                  pos = js_lower.find(termo.lower(), pos)
+
+                  if pos == -1:
+                      break
+
+                  encontrados.append((pos, termo))
+                  pos += len(termo)
+
+          encontrados.sort()
+
+          print("Ocorrencias encontradas:", len(encontrados))
+          print("")
+
+          if not encontrados:
+              print("[?] Nenhum termo relacionado ao contador foi encontrado.")
+              print("")
+              print("Pode ser que o nome das variaveis seja diferente.")
+              raise SystemExit(0)
+
+          usados = set()
+          contador = 0
+
+          for pos, termo in encontrados:
+
+              # Evita mostrar varias vezes praticamente o mesmo trecho
+              bloco = pos // 600
+
+              if bloco in usados:
+                  continue
+
+              usados.add(bloco)
+
+              inicio = max(0, pos - 350)
+              fim = min(len(js), pos + 650)
+
+              trecho = js[inicio:fim]
+
+              # Quebra um pouco o JavaScript para facilitar a leitura
+              trecho = re.sub(
+                  r'[{}]',
+                  lambda m: m.group(0) + "\n",
+                  trecho
+              )
+
+              trecho = re.sub(
+                  r';',
+                  ';\n',
+                  trecho
+              )
+
+              print("----------------------------------------")
+              print("TERMO ENCONTRADO:", termo)
+              print("POSICAO:", pos)
+              print("----------------------------------------")
+              print(trecho[:1400])
+              print("")
+
+              contador += 1
+
+              if contador >= 20:
+                  break
+
+          print("========================================")
+          print("FIM DA ANALISE")
+          print("========================================")
+          print("")
+          print("Foram mostrados no maximo 20 trechos relevantes.")
+          PY
+
+      - name: Procurar elementos de interface relacionados ao tempo
+        shell: bash
+        run: |
+          python3 <<'PY'
+          import re
+
+          js = open(
+              "/tmp/game.js",
+              encoding="utf-8",
+              errors="ignore"
+          ).read()
+
+          print("")
+          print("========================================")
+          print("ELEMENTOS DA INTERFACE")
+          print("========================================")
+
+          padroes = [
+              r'getElementById\([^)]*\)',
+              r'querySelector\([^)]*\)',
+              r'querySelectorAll\([^)]*\)',
+              r'innerText\s*=',
+              r'textContent\s*=',
+              r'innerHTML\s*=',
+              r'createElement\([^)]*\)'
+          ]
+
+          achados = []
+
+          for padrao in padroes:
+              for m in re.finditer(padrao, js, re.I):
+                  trecho = js[
+                      max(0, m.start() - 180):
+                      min(len(js), m.end() + 300)
+                  ]
+
+                  baixo = trecho.lower()
+
+                  if any(
+                      x in baixo
+                      for x in [
+                          "timer",
+                          "tempo",
+                          "time",
+                          "fase",
+                          "phase",
+                          "second",
+                          "countdown",
+                          "remaining"
+                      ]
+                  ):
+                      achados.append(trecho)
+
+          vistos = set()
+          contador = 0
+
+          for trecho in achados:
+              chave = trecho[:250]
+
+              if chave in vistos:
+                  continue
+
+              vistos.add(chave)
+
+              print("")
+              print("----------------------------------------")
+              print(trecho[:700])
+              print("----------------------------------------")
+
+              contador += 1
+
+              if contador >= 15:
+                  break
+
+          if contador == 0:
+              print("")
+              print("[?] Nenhum elemento de interface claramente relacionado ao tempo foi encontrado.")
+
+          print("")
+          print("========================================")
+          print("ANALISE CONCLUIDA")
+          print("========================================")
+          PY
