@@ -1,4 +1,4 @@
-name: Gerar APK Carga Dutra 99999
+name: Carga Dutra - APK 99999
 
 on:
   workflow_dispatch:
@@ -9,50 +9,78 @@ jobs:
 
     steps:
 
+      # ============================================================
+      # 1. BAIXAR O JOGO ORIGINAL
+      # ============================================================
       - name: Baixar jogo original
         run: |
+          set -e
+
           curl -L --fail --max-time 120 \
             "https://cargadutra.netlify.app/" \
             -o original.html
 
+          echo "Jogo original baixado:"
           wc -c original.html
 
 
+      # ============================================================
+      # 2. CONFIGURAR NODE
+      # ============================================================
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
 
-      - name: Modificar timer do jogo
+      # ============================================================
+      # 3. MODIFICAR O JOGO
+      # ============================================================
+      - name: Modificar timer sem alterar a estrutura do jogo
         run: |
+          set -e
+
           python3 <<'PY'
           import re
           import base64
           import urllib.parse
           import os
 
+          INPUT = "original.html"
+          OUTPUT_DIR = "web"
+          OUTPUT = "web/index.html"
+
+          os.makedirs(OUTPUT_DIR, exist_ok=True)
+
           html = open(
-              "original.html",
+              INPUT,
               "r",
               encoding="utf-8",
               errors="ignore"
           ).read()
 
-          os.makedirs("web", exist_ok=True)
+          print("HTML original:", len(html), "bytes")
 
+          # --------------------------------------------------------
+          # Decodifica data:text/javascript
+          # --------------------------------------------------------
           def decode_data_url(url):
               header, data = url.split(",", 1)
+
               data = urllib.parse.unquote(data)
 
               if ";base64" in header.lower():
-                  return base64.b64decode(data).decode(
+                  raw = base64.b64decode(data)
+                  return raw.decode(
                       "utf-8",
                       errors="ignore"
                   )
 
               return data
 
+          # --------------------------------------------------------
+          # Codifica novamente como data URL
+          # --------------------------------------------------------
           def encode_data_url(js):
               encoded = base64.b64encode(
                   js.encode("utf-8")
@@ -63,29 +91,47 @@ jobs:
                   + encoded
               )
 
+          # --------------------------------------------------------
+          # Procura scripts
+          # --------------------------------------------------------
           scripts = re.findall(
               r'<script[^>]+src=["\']([^"\']+)["\']',
               html,
               re.I
           )
 
-          principal_url = None
-
-          for src in scripts:
-              if src.startswith("data:text/javascript"):
-                  principal_url = src
-                  break
-
-          if not principal_url:
-              raise SystemExit(
-                  "ERRO: script principal não encontrado."
+          data_scripts = [
+              s for s in scripts
+              if s.lower().startswith(
+                  "data:text/javascript"
               )
+          ]
+
+          if not data_scripts:
+              raise SystemExit(
+                  "ERRO: nenhum módulo JavaScript data: encontrado."
+              )
+
+          print(
+              "Módulos data encontrados:",
+              len(data_scripts)
+          )
+
+          principal_url = data_scripts[0]
 
           print("Script principal encontrado.")
 
+          # Cache para não processar duas vezes
           cache = {}
-          alterado = False
 
+          timer_alterado = False
+
+          # --------------------------------------------------------
+          # Importações data:
+          #
+          # from "data:text/javascript..."
+          # import "data:text/javascript..."
+          # --------------------------------------------------------
           pattern = re.compile(
               r'(?P<prefix>(?:from|import)\s*[\'"])'
               r'(?P<url>data:text/javascript[^\'"]+)'
@@ -95,7 +141,7 @@ jobs:
 
           def process_module(url, nivel=0):
 
-              global alterado
+              global timer_alterado
 
               if url in cache:
                   return cache[url]
@@ -109,6 +155,9 @@ jobs:
                   "bytes"
               )
 
+              # ----------------------------------------------------
+              # Primeiro processa módulos internos
+              # ----------------------------------------------------
               def replace_import(match):
 
                   old_url = match.group("url")
@@ -129,7 +178,11 @@ jobs:
                   js
               )
 
+              # ----------------------------------------------------
+              # ALTERAÇÃO DO TIMER
+              # ----------------------------------------------------
               antigo = "this.state.elapsed += dt;"
+
               novo = "this.state.elapsed = 99999;"
 
               if antigo in js:
@@ -145,17 +198,48 @@ jobs:
                       1
                   )
 
-                  alterado = True
+                  timer_alterado = True
 
                   print(
                       "  " * nivel +
-                      ">>> TIMER ALTERADO PARA 99999"
+                      ">>> TIMER INTERNO = 99999"
+                  )
+
+              # ----------------------------------------------------
+              # ALTERAÇÃO VISUAL
+              #
+              # O jogo original transforma 99999 em 1666:39.
+              # Aqui fazemos o HUD mostrar literalmente 99999.
+              # ----------------------------------------------------
+              antigo_hud = (
+                  "ui.hudTimer.textContent = "
+                  "formatTime(hud.elapsed);"
+              )
+
+              novo_hud = (
+                  "ui.hudTimer.textContent = '99999';"
+              )
+
+              if antigo_hud in js:
+
+                  js = js.replace(
+                      antigo_hud,
+                      novo_hud,
+                      1
+                  )
+
+                  print(
+                      "  " * nivel +
+                      ">>> HUD = 99999"
                   )
 
               cache[url] = encode_data_url(js)
 
               return cache[url]
 
+          # --------------------------------------------------------
+          # Processa o módulo principal
+          # --------------------------------------------------------
           principal_js = decode_data_url(
               principal_url
           )
@@ -180,11 +264,18 @@ jobs:
               principal_js
           )
 
-          if not alterado:
+          # --------------------------------------------------------
+          # Verifica se o timer foi realmente encontrado
+          # --------------------------------------------------------
+          if not timer_alterado:
               raise SystemExit(
                   "ERRO: timer não encontrado."
               )
 
+          # --------------------------------------------------------
+          # Re-empacota somente o script principal.
+          # O restante do HTML original permanece igual.
+          # --------------------------------------------------------
           novo_principal = encode_data_url(
               principal_js
           )
@@ -197,27 +288,74 @@ jobs:
 
           if html_final == html:
               raise SystemExit(
-                  "ERRO: HTML não foi modificado."
+                  "ERRO: o HTML não foi alterado."
+              )
+
+          # --------------------------------------------------------
+          # Garante que NÃO existe iframe no nosso arquivo.
+          # --------------------------------------------------------
+          if "<iframe" in html_final.lower():
+              print(
+                  "AVISO: HTML original possui iframe."
               )
 
           open(
-              "web/index.html",
+              OUTPUT,
               "w",
               encoding="utf-8"
           ).write(html_final)
 
           print("")
-          print("================================")
-          print("JOGO MODIFICADO")
-          print("================================")
+          print("==========================================")
+          print("JOGO MODIFICADO COM SUCESSO")
+          print("==========================================")
           print("Timer interno: 99999")
-          print("Módulos:", len(cache))
-          print("HTML:", len(html_final), "bytes")
+          print("HUD: 99999")
+          print("Módulos processados:", len(cache))
+          print("HTML final:", len(html_final), "bytes")
+          print("Arquivo:", OUTPUT)
           PY
 
 
+      # ============================================================
+      # 4. VERIFICAR O ARQUIVO
+      # ============================================================
+      - name: Verificar jogo modificado
+        run: |
+          set -e
+
+          test -f web/index.html
+
+          echo "Arquivo encontrado:"
+          ls -lh web/index.html
+
+          echo ""
+          echo "Procurando alteração do timer..."
+
+          grep -o "this.state.elapsed = 99999" \
+            web/index.html \
+            | head -1 \
+            || true
+
+          echo ""
+          echo "Procurando HUD 99999..."
+
+          grep -o "ui.hudTimer.textContent = '99999'" \
+            web/index.html \
+            | head -1 \
+            || true
+
+          echo ""
+          echo "Verificação concluída."
+
+
+      # ============================================================
+      # 5. CRIAR PROJETO CAPACITOR
+      # ============================================================
       - name: Instalar Capacitor
         run: |
+          set -e
+
           npm init -y
 
           npm install \
@@ -226,24 +364,42 @@ jobs:
             @capacitor/android
 
 
+      # ============================================================
+      # 6. INICIALIZAR CAPACITOR
+      # ============================================================
       - name: Inicializar Capacitor
         run: |
+          set -e
+
           npx cap init \
             "Carga Dutra" \
             "com.cargadutra.game" \
             --web-dir web
 
 
+      # ============================================================
+      # 7. ADICIONAR ANDROID
+      # ============================================================
       - name: Adicionar Android
         run: |
+          set -e
+
           npx cap add android
 
 
+      # ============================================================
+      # 8. COPIAR O JOGO PARA O APK
+      # ============================================================
       - name: Copiar jogo para Android
         run: |
+          set -e
+
           npx cap copy android
 
 
+      # ============================================================
+      # 9. JAVA 21
+      # ============================================================
       - name: Configurar Java 21
         uses: actions/setup-java@v4
         with:
@@ -251,53 +407,17 @@ jobs:
           java-version: 21
 
 
+      # ============================================================
+      # 10. ANDROID SDK
+      # ============================================================
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
 
 
-      - name: Corrigir conflito Kotlin
-        working-directory: android
-        run: |
-          python3 <<'PY'
-          import os
-
-          path = "app/build.gradle"
-
-          text = open(
-              path,
-              encoding="utf-8"
-          ).read()
-
-          # Força todas as dependências Kotlin para uma
-          # única versão compatível.
-          linhas = [
-              "",
-              "configurations.all {",
-              "    resolutionStrategy {",
-              "        force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'",
-              "        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'",
-              "        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'",
-              "    }",
-              "}",
-              ""
-          ]
-
-          bloco = "\n".join(linhas)
-
-          if "force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'" not in text:
-              text += bloco
-
-          open(
-              path,
-              "w",
-              encoding="utf-8"
-          ).write(text)
-
-          print("Conflito Kotlin configurado.")
-          PY
-
-
-      - name: Configurar permissao INTERNET
+      # ============================================================
+      # 11. PERMISSÕES ANDROID
+      # ============================================================
+      - name: Configurar permissões Android
         run: |
           python3 <<'PY'
           path = "android/app/src/main/AndroidManifest.xml"
@@ -313,6 +433,7 @@ jobs:
           )
 
           if permission not in text:
+
               text = text.replace(
                   "<manifest",
                   "<manifest\n    " + permission,
@@ -325,13 +446,56 @@ jobs:
               encoding="utf-8"
           ).write(text)
 
-          print("Permissao INTERNET configurada.")
+          print("INTERNET configurado.")
           PY
 
 
+      # ============================================================
+      # 12. CORRIGIR CONFLITO KOTLIN
+      # ============================================================
+      - name: Corrigir Kotlin
+        working-directory: android
+        run: |
+          python3 <<'PY'
+          path = "app/build.gradle"
+
+          text = open(
+              path,
+              encoding="utf-8"
+          ).read()
+
+          bloco = """
+
+          configurations.all {
+              resolutionStrategy {
+                  force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+              }
+          }
+          """
+
+          if "kotlin-stdlib:1.8.22" not in text:
+              text += bloco
+
+          open(
+              path,
+              "w",
+              encoding="utf-8"
+          ).write(text)
+
+          print("Kotlin configurado.")
+          PY
+
+
+      # ============================================================
+      # 13. COMPILAR APK
+      # ============================================================
       - name: Compilar APK
         working-directory: android
         run: |
+          set -e
+
           chmod +x gradlew
 
           ./gradlew assembleDebug \
@@ -339,8 +503,13 @@ jobs:
             --stacktrace
 
 
+      # ============================================================
+      # 14. PREPARAR APK FINAL
+      # ============================================================
       - name: Preparar APK
         run: |
+          set -e
+
           mkdir -p final
 
           cp \
@@ -348,17 +517,20 @@ jobs:
             final/carga-dutra-99999.apk
 
           echo ""
-          echo "================================"
+          echo "=========================================="
           echo "APK GERADO"
-          echo "================================"
+          echo "=========================================="
 
           ls -lh final/carga-dutra-99999.apk
 
 
+      # ============================================================
+      # 15. ENVIAR APK PARA ARTIFACT
+      # ============================================================
       - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
           name: carga-dutra-99999-apk
           path: final/carga-dutra-99999.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 7       
