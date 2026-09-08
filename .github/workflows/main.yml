@@ -1,4 +1,4 @@
-name: Gerar Carga Dutra Modificado
+name: Gerar Carga Dutra 99999
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
           echo "HTML baixado:"
           wc -c original.html
 
-      - name: Modificar jogo e reconstruir módulos
+      - name: Modificar módulos do jogo
         run: |
           python3 <<'PY'
           import re
@@ -25,35 +25,38 @@ jobs:
           import urllib.parse
           import os
 
-          HTML = "original.html"
-          OUT = "dist"
-
-          os.makedirs(OUT, exist_ok=True)
-
           html = open(
-              HTML,
+              "original.html",
               "r",
               encoding="utf-8",
               errors="ignore"
           ).read()
 
+          os.makedirs("dist", exist_ok=True)
+
           def decode_data_url(url):
               header, data = url.split(",", 1)
-
               data = urllib.parse.unquote(data)
 
               if ";base64" in header.lower():
-                  raw = base64.b64decode(data)
-                  return raw.decode("utf-8", errors="ignore")
+                  return base64.b64decode(data).decode(
+                      "utf-8",
+                      errors="ignore"
+                  )
 
               return data
 
-          def encode_data_url(text):
-              raw = text.encode("utf-8")
-              encoded = base64.b64encode(raw).decode("ascii")
-              return "data:text/javascript;charset=utf-8;base64," + encoded
+          def encode_data_url(js):
+              encoded = base64.b64encode(
+                  js.encode("utf-8")
+              ).decode("ascii")
 
-          # Encontra o script principal
+              return (
+                  "data:text/javascript;charset=utf-8;base64,"
+                  + encoded
+              )
+
+          # Encontrar script principal
           scripts = re.findall(
               r'<script[^>]+src=["\']([^"\']+)["\']',
               html,
@@ -69,227 +72,227 @@ jobs:
 
           if not principal_url:
               raise SystemExit(
-                  "ERRO: script principal data:text/javascript não encontrado."
+                  "ERRO: script principal não encontrado."
               )
 
           print("Script principal encontrado.")
 
-          # Cache para não decodificar o mesmo módulo várias vezes
           cache = {}
 
-          def process_module(url, depth=0):
+          import_pattern = re.compile(
+              r'(?P<prefix>(?:from|import)\s*[\'"])'
+              r'(?P<url>data:text/javascript[^\'"]+)'
+              r'(?P<suffix>[\'"])',
+              re.I
+          )
+
+          def process_module(url, nivel=0):
+
               if url in cache:
                   return cache[url]
 
               js = decode_data_url(url)
 
-              indent = "  " * depth
-              print(indent + "Módulo:", len(js), "bytes")
-
-              # Primeiro processa módulos importados.
-              pattern = re.compile(
-                  r'(?P<prefix>(?:from|import)\s*[\'"])(?P<url>data:text/javascript[^\'"]+)(?P<suffix>[\'"])',
-                  re.I
+              print(
+                  "  " * nivel +
+                  "Módulo:",
+                  len(js),
+                  "bytes"
               )
 
+              # Processar imports internos primeiro
               def replace_import(match):
+
                   old_url = match.group("url")
 
-                  try:
-                      new_url = process_module(
-                          old_url,
-                          depth + 1
-                      )
-                      return (
-                          match.group("prefix")
-                          + new_url
-                          + match.group("suffix")
-                      )
-                  except Exception as e:
-                      print(
-                          indent +
-                          "ERRO processando módulo:",
-                          e
-                      )
-                      raise
+                  new_url = process_module(
+                      old_url,
+                      nivel + 1
+                  )
 
-              js = pattern.sub(replace_import, js)
+                  return (
+                      match.group("prefix")
+                      + new_url
+                      + match.group("suffix")
+                  )
 
-              # Modificação do TIMER REAL
+              js = import_pattern.sub(
+                  replace_import,
+                  js
+              )
+
+              # ========================================
+              # TIMER REAL
+              # ========================================
+
               antigo = "this.state.elapsed += dt;"
               novo = "this.state.elapsed = 99999;"
 
-              quantidade = js.count(antigo)
+              if antigo in js:
 
-              if quantidade:
                   print(
-                      indent +
-                      "Timer encontrado:",
-                      quantidade,
-                      "ocorrencia(s)"
+                      "  " * nivel +
+                      ">>> TIMER ENCONTRADO!"
                   )
 
                   js = js.replace(
                       antigo,
-                      novo
-                  )
-
-              # Também fazemos o HUD mostrar literalmente 99999.
-              antigo_hud = "ui.hudTimer.textContent = formatTime(hud.elapsed);"
-              novo_hud = "ui.hudTimer.textContent = '99999';"
-
-              if antigo_hud in js:
-                  print(
-                      indent +
-                      "HUD do timer encontrado."
-                  )
-
-                  js = js.replace(
-                      antigo_hud,
-                      novo_hud,
+                      novo,
                       1
                   )
 
-              new_url = encode_data_url(js)
+                  print(
+                      "  " * nivel +
+                      ">>> TIMER ALTERADO PARA 99999!"
+                  )
 
-              cache[url] = new_url
+              cache[url] = encode_data_url(js)
 
-              return new_url
+              return cache[url]
 
-          # Reconstrói o principal
-          principal_js = decode_data_url(principal_url)
+          # Decodificar principal
+          principal_js = decode_data_url(
+              principal_url
+          )
 
           print("")
-          print("Processando módulos do jogo...")
+          print("Processando módulos...")
 
-          # Processa os imports do principal
-          pattern_principal = re.compile(
-              r'(?P<prefix>(?:from|import)\s*[\'"])(?P<url>data:text/javascript[^\'"]+)(?P<suffix>[\'"])',
-              re.I
-          )
+          # Reconstruir imports do principal
+          def replace_principal(match):
 
-          def replace_principal_import(match):
               old_url = match.group("url")
 
-              return (
-                  match.group("prefix")
-                  + process_module(old_url, 1)
-                  + match.group("suffix")
-              )
-
-          principal_js = pattern_principal.sub(
-              replace_principal_import,
-              principal_js
-          )
-
-          # Garantia extra:
-          # se o principal também possuir o incremento diretamente.
-          if "this.state.elapsed += dt;" in principal_js:
-              principal_js = principal_js.replace(
-                  "this.state.elapsed += dt;",
-                  "this.state.elapsed = 99999;"
-              )
-
-          # HUD literal
-          if "ui.hudTimer.textContent = formatTime(hud.elapsed);" in principal_js:
-              principal_js = principal_js.replace(
-                  "ui.hudTimer.textContent = formatTime(hud.elapsed);",
-                  "ui.hudTimer.textContent = '99999';",
+              new_url = process_module(
+                  old_url,
                   1
               )
 
-          # Recoloca o principal modificado no HTML.
-          novo_principal = encode_data_url(principal_js)
+              return (
+                  match.group("prefix")
+                  + new_url
+                  + match.group("suffix")
+              )
+
+          principal_js = import_pattern.sub(
+              replace_principal,
+              principal_js
+          )
+
+          # ========================================
+          # VERIFICAR O PRINCIPAL
+          # ========================================
+
+          print("")
+          print("========================================")
+          print("VERIFICAÇÃO DA ALTERAÇÃO")
+          print("========================================")
+
+          # Procurar o texto antigo no principal
+          if "this.state.elapsed += dt;" in principal_js:
+              print(
+                  "AVISO: incremento antigo ainda aparece no principal."
+              )
+          else:
+              print(
+                  "OK: incremento antigo não está no principal."
+              )
+
+          # Verificar se algum módulo processado contém
+          # a versão modificada.
+          modulo_modificado = False
+
+          for url_codificado, novo_url in cache.items():
+
+              js_teste = decode_data_url(
+                  novo_url
+              )
+
+              if "this.state.elapsed = 99999;" in js_teste:
+                  modulo_modificado = True
+                  print(
+                      "OK: módulo do Simulator contém "
+                      "this.state.elapsed = 99999;"
+                  )
+                  break
+
+          if not modulo_modificado:
+              raise SystemExit(
+                  "ERRO: não encontrei a alteração "
+                  "dentro dos módulos reconstruídos."
+              )
+
+          # ========================================
+          # GERAR PRINCIPAL FINAL
+          # ========================================
+
+          principal_final = encode_data_url(
+              principal_js
+          )
 
           html_final = html.replace(
               principal_url,
-              novo_principal,
+              principal_final,
               1
           )
 
           if html_final == html:
               raise SystemExit(
-                  "ERRO: não foi possível substituir o script principal."
+                  "ERRO: principal não foi inserido no HTML."
               )
-
-          # Verificação final
-          total_timer = (
-              html_final.count(
-                  "this.state.elapsed = 99999;"
-              )
-          )
-
-          total_hud = (
-              html_final.count(
-                  "ui.hudTimer.textContent = '99999';"
-              )
-          )
-
-          print("")
-          print("========================================")
-          print("VERIFICAÇÃO")
-          print("========================================")
-          print("Timer real encontrado:", total_timer)
-          print("HUD 99999 encontrado:", total_hud)
-          print("Módulos processados:", len(cache))
-
-          if total_timer == 0:
-              raise SystemExit(
-                  "ERRO: alteração do timer não apareceu no HTML final."
-              )
-
-          if total_hud == 0:
-              print(
-                  "AVISO: HUD não foi encontrado; "
-                  "o timer interno foi alterado mesmo assim."
-              )
-
-          # Salva versão final
-          caminho_final = os.path.join(
-              OUT,
-              "index.html"
-          )
 
           open(
-              caminho_final,
+              "dist/index.html",
               "w",
               encoding="utf-8"
           ).write(html_final)
 
           print("")
-          print("Jogo modificado criado:")
-          print(caminho_final)
-          print("Tamanho:", len(html_final), "bytes")
+          print("========================================")
+          print("SUCESSO")
+          print("========================================")
+          print("Módulos processados:", len(cache))
+          print(
+              "Timer interno configurado para 99999 segundos."
+          )
+          print(
+              "Arquivo criado: dist/index.html"
+          )
+          print(
+              "Tamanho:",
+              len(html_final),
+              "bytes"
+          )
           PY
 
       - name: Criar ZIP
         run: |
           cd dist
 
-          zip -9 -r \
-            ../carga-dutra-99999.zip \
-            index.html
+          zip -9 ../carga-dutra-99999.zip index.html
 
           cd ..
 
+          echo ""
           echo "========================================"
           echo "ZIP GERADO"
           echo "========================================"
 
           ls -lh carga-dutra-99999.zip
 
-      - name: Verificar ZIP
+      - name: Testar ZIP
         run: |
+          echo "Testando arquivo..."
+
           unzip -t carga-dutra-99999.zip
 
           echo ""
           echo "========================================"
-          echo "BUILD CONCLUIDO"
+          echo "TUDO CERTO"
           echo "========================================"
           echo "Arquivo: carga-dutra-99999.zip"
-          echo "O ZIP contém o jogo modificado."
 
-      - name: Disponibilizar ZIP para download
+      - name: Disponibilizar ZIP
         uses: actions/upload-artifact@v4
         with:
           name: carga-dutra-99999
