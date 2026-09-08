@@ -1,4 +1,4 @@
-name: Gerar APK 99999
+name: Diagnostico do jogo
 
 on:
   workflow_dispatch:
@@ -8,267 +8,125 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar jogo original
+      - name: Baixar projeto
+        uses: actions/checkout@v4
+
+      - name: Preparar ambiente
         run: |
-          mkdir -p app/src/main/assets
-          curl -L "https://cargadutra.netlify.app/" \
-            -o app/src/main/assets/game.html
+          echo "========================================"
+          echo "INICIANDO DIAGNOSTICO"
+          echo "========================================"
+          echo ""
+          echo "Arquivos do projeto:"
+          find . -maxdepth 3 -type f \
+            ! -path './.git/*' \
+            -print | sort | head -300
 
-      - name: Alterar código do jogo
+      - name: Procurar elapsed
+        shell: bash
         run: |
-          python3 <<'PY'
-          import re
-          import base64
+          echo ""
+          echo "========================================"
+          echo "PROCURANDO: elapsed"
+          echo "========================================"
 
-          arquivo = "app/src/main/assets/game.html"
+          if grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude='package-lock.json' \
+            --exclude='yarn.lock' \
+            --exclude='pnpm-lock.yaml' \
+            "elapsed" . > /tmp/elapsed.txt 2>/dev/null; then
 
-          with open(arquivo, "r", encoding="utf-8") as f:
-              html = f.read()
+            echo "Encontrado:"
+            cat /tmp/elapsed.txt | head -100
+          else
+            echo "Nenhuma ocorrência de 'elapsed' encontrada."
+          fi
 
-          # Encontra TODOS os módulos JavaScript data:
-          padrao = r'data:text/javascript;charset=utf-8;base64,([A-Za-z0-9+/=]+)'
-
-          encontrados = list(re.finditer(padrao, html))
-
-          print("Módulos encontrados:", len(encontrados))
-
-          if not encontrados:
-              raise Exception("Nenhum módulo JavaScript encontrado.")
-
-          alterados = 0
-
-          # Trabalha de trás para frente para não quebrar os índices
-          for m in reversed(encontrados):
-
-              try:
-                  codigo = base64.b64decode(m.group(1)).decode("utf-8")
-              except:
-                  continue
-
-              original = codigo
-
-              # CONTADOR REAL DA PARTIDA
-              codigo = codigo.replace(
-                  "this.state.elapsed += dt;",
-                  "this.state.elapsed = 99999;"
-              )
-
-              # Outras possíveis formas de incremento
-              codigo = codigo.replace(
-                  "this.state.elapsed += delta;",
-                  "this.state.elapsed = 99999;"
-              )
-
-              codigo = codigo.replace(
-                  "this.state.elapsed += fixedDt;",
-                  "this.state.elapsed = 99999;"
-              )
-
-              # Todos os tempos das fases
-              codigo = re.sub(
-                  r'targetTime\s*:\s*\d+',
-                  'targetTime: 99999',
-                  codigo
-              )
-
-              if codigo != original:
-
-                  novo = base64.b64encode(
-                      codigo.encode("utf-8")
-                  ).decode("ascii")
-
-                  inicio = m.start(1)
-                  fim = m.end(1)
-
-                  html = html[:inicio] + novo + html[fim:]
-
-                  alterados += 1
-
-          print("Módulos alterados:", alterados)
-
-          if alterados == 0:
-              raise Exception(
-                  "O código do contador não foi encontrado. "
-                  "Não vou gerar um APK que não tenha a alteração."
-              )
-
-          with open(arquivo, "w", encoding="utf-8") as f:
-              f.write(html)
-
-          print("CONTADOR 99999 APLICADO")
-          PY
-
-      - name: Criar projeto Android
+      - name: Procurar targetTime
+        shell: bash
         run: |
-          mkdir -p app/src/main/java/com/cargadutra/apk
-          mkdir -p app/src/main/res/values
+          echo ""
+          echo "========================================"
+          echo "PROCURANDO: targetTime"
+          echo "========================================"
 
-          cat > settings.gradle <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
+          if grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude='package-lock.json' \
+            --exclude='yarn.lock' \
+            --exclude='pnpm-lock.yaml' \
+            "targetTime" . > /tmp/targetTime.txt 2>/dev/null; then
 
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
+            echo "Encontrado:"
+            cat /tmp/targetTime.txt | head -100
+          else
+            echo "Nenhuma ocorrência de 'targetTime' encontrada."
+          fi
 
-          rootProject.name = "CargaDutra"
-          include ":app"
-          EOF
-
-          cat > build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.7.3' apply false
-          }
-          EOF
-
-          cat > app/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application'
-          }
-
-          android {
-              namespace 'com.cargadutra.apk'
-              compileSdk 35
-
-              defaultConfig {
-                  applicationId "com.cargadutra.apk"
-                  minSdk 23
-                  targetSdk 35
-                  versionCode 2
-                  versionName "2.0"
-              }
-          }
-          EOF
-
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <resources>
-              <style name="AppTheme"
-                  parent="android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:windowFullscreen">true</item>
-              </style>
-          </resources>
-          EOF
-
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-              <uses-permission android:name="android.permission.INTERNET"/>
-
-              <application
-                  android:theme="@style/AppTheme"
-                  android:label="Carga Dutra">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:screenOrientation="landscape"
-                      android:exported="true">
-
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-
-                  </activity>
-
-              </application>
-
-          </manifest>
-          EOF
-
-      - name: Criar aplicativo
+      - name: Procurar formatTime
+        shell: bash
         run: |
-          cat > app/src/main/java/com/cargadutra/apk/MainActivity.java <<'EOF'
-          package com.cargadutra.apk;
+          echo ""
+          echo "========================================"
+          echo "PROCURANDO: formatTime"
+          echo "========================================"
 
-          import android.app.Activity;
-          import android.os.Bundle;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-          import java.io.InputStream;
+          if grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude='package-lock.json' \
+            --exclude='yarn.lock' \
+            --exclude='pnpm-lock.yaml' \
+            "formatTime" . > /tmp/formatTime.txt 2>/dev/null; then
 
-          public class MainActivity extends Activity {
+            echo "Encontrado:"
+            cat /tmp/formatTime.txt | head -100
+          else
+            echo "Nenhuma ocorrência de 'formatTime' encontrada."
+          fi
 
-              private WebView web;
-
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-
-                  web = new WebView(this);
-
-                  WebSettings s = web.getSettings();
-
-                  s.setJavaScriptEnabled(true);
-                  s.setDomStorageEnabled(true);
-                  s.setAllowFileAccess(true);
-                  s.setAllowContentAccess(true);
-                  s.setMediaPlaybackRequiresUserGesture(false);
-                  s.setSupportZoom(false);
-
-                  web.setWebViewClient(new WebViewClient());
-
-                  setContentView(web);
-
-                  try {
-
-                      InputStream input =
-                          getAssets().open("game.html");
-
-                      byte[] data =
-                          new byte[input.available()];
-
-                      input.read(data);
-                      input.close();
-
-                      String html =
-                          new String(data, "UTF-8");
-
-                      web.loadDataWithBaseURL(
-                          "https://cargadutra.netlify.app/",
-                          html,
-                          "text/html",
-                          "UTF-8",
-                          null
-                      );
-
-                  } catch (Exception e) {
-                      e.printStackTrace();
-                  }
-              }
-
-              @Override
-              public void onBackPressed() {
-
-                  if (web != null && web.canGoBack()) {
-                      web.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
-          }
-          EOF
-
-      - name: Instalar Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.11.1"
-
-      - name: Compilar APK
+      - name: Procurar palavras relacionadas ao contador
+        shell: bash
         run: |
-          gradle assembleDebug --no-daemon
+          echo ""
+          echo "========================================"
+          echo "PROCURANDO TERMOS DO CONTADOR"
+          echo "========================================"
 
-      - name: Disponibilizar APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: carga-dutra-99999-v2
-          path: app/build/outputs/apk/debug/app-debug.apk
+          grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude='package-lock.json' \
+            --exclude='yarn.lock' \
+            --exclude='pnpm-lock.yaml' \
+            "timer|countdown|count|time|tempo|elapsed|targetTime|formatTime" . \
+            > /tmp/timer.txt 2>/dev/null || true
+
+          if [ -s /tmp/timer.txt ]; then
+            echo "Ocorrências encontradas:"
+            cat /tmp/timer.txt | head -200
+          else
+            echo "Nenhum termo relacionado encontrado."
+          fi
+
+      - name: Diagnostico final
+        shell: bash
+        run: |
+          echo ""
+          echo "========================================"
+          echo "DIAGNOSTICO CONCLUIDO"
+          echo "========================================"
+          echo ""
+          echo "O workflow chegou ao final sem cancelar"
+          echo "porque uma palavra não foi encontrada."
+          echo ""
+          echo "Agora procure no log pelas seções:"
+          echo "  PROCURANDO: elapsed"
+          echo "  PROCURANDO: targetTime"
+          echo "  PROCURANDO: formatTime"
+          echo "  PROCURANDO TERMOS DO CONTADOR"
+          echo ""
+          echo "========================================"
