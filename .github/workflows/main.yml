@@ -1,4 +1,4 @@
-name: Analisar contador do jogo
+name: Encontrar calculo exato do timer
 
 on:
   workflow_dispatch:
@@ -8,18 +8,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar pagina do jogo
-        shell: bash
+      - name: Baixar jogo
         run: |
           curl -L --max-time 60 -s \
             "https://cargadutra.netlify.app/" \
             -o /tmp/index.html
 
-          echo "Pagina baixada."
-          wc -c /tmp/index.html
-
-      - name: Decodificar JavaScript do jogo
-        shell: bash
+      - name: Decodificar JavaScript
         run: |
           python3 <<'PY'
           import re
@@ -38,65 +33,41 @@ jobs:
               re.I
           )
 
-          print("")
-          print("========================================")
-          print("SCRIPTS ENCONTRADOS")
-          print("========================================")
-          print("Quantidade:", len(scripts))
+          script = None
 
-          game_js = None
-
-          for i, src in enumerate(scripts):
-              print(f"[{i}] {src[:120]}")
-
+          for src in scripts:
               if src.startswith("data:text/javascript"):
-                  game_js = src
+                  script = src
                   break
 
-          if not game_js:
-              print("")
-              print("[ERRO] Nenhum script data:text/javascript encontrado.")
+          if not script:
+              print("ERRO: script do jogo nao encontrado.")
               open("/tmp/game.js", "w").write("")
               raise SystemExit(0)
 
-          print("")
-          print("Script do jogo encontrado.")
-
-          try:
-              header, data = game_js.split(",", 1)
-          except ValueError:
-              print("[ERRO] Formato data URL inesperado.")
-              open("/tmp/game.js", "w").write("")
-              raise SystemExit(0)
+          header, data = script.split(",", 1)
 
           data = urllib.parse.unquote(data)
 
           if ";base64" in header.lower():
-              try:
-                  decoded = base64.b64decode(data).decode(
-                      "utf-8",
-                      errors="ignore"
-                  )
-              except Exception as e:
-                  print("[ERRO] Falha ao decodificar Base64:", e)
-                  open("/tmp/game.js", "w").write("")
-                  raise SystemExit(0)
+              js = base64.b64decode(data).decode(
+                  "utf-8",
+                  errors="ignore"
+              )
           else:
-              decoded = data
+              js = data
 
           open(
               "/tmp/game.js",
               "w",
               encoding="utf-8"
-          ).write(decoded)
+          ).write(js)
 
-          print("")
-          print("JavaScript decodificado com sucesso.")
-          print("Tamanho:", len(decoded), "caracteres")
+          print("JavaScript decodificado.")
+          print("Tamanho:", len(js), "caracteres")
           PY
 
-      - name: Procurar codigo do contador
-        shell: bash
+      - name: Localizar hudTimer
         run: |
           python3 <<'PY'
           import re
@@ -109,172 +80,39 @@ jobs:
 
           print("")
           print("========================================")
-          print("ANALISE DO CONTADOR")
+          print("REFERENCIAS AO HUD TIMER")
           print("========================================")
-          print("")
 
-          termos = [
-              "elapsed",
-              "targetTime",
-              "formatTime",
-              "timer",
-              "countdown",
-              "remaining",
-              "timeLeft",
-              "timeRemaining",
-              "duration",
-              "seconds",
-              "setInterval",
-              "setTimeout",
-              "Date.now",
-              "performance.now",
-              "requestAnimationFrame",
-              "tempo",
-              "fase",
-              "phase",
-              "innerText",
-              "textContent",
-              "99999",
-              "9999999",
-              "60000",
-              "30000"
+          padroes = [
+              r'ui\.hudTimer',
+              r'hudTimer',
+              r'formatTime\(',
+              r'innerText\s*=',
+              r'textContent\s*='
           ]
 
           encontrados = []
 
-          js_lower = js.lower()
-
-          for termo in termos:
-              pos = 0
-
-              while True:
-                  pos = js_lower.find(termo.lower(), pos)
-
-                  if pos == -1:
-                      break
-
-                  encontrados.append((pos, termo))
-                  pos += len(termo)
+          for padrao in padroes:
+              for m in re.finditer(padrao, js, re.I):
+                  encontrados.append(
+                      (m.start(), m.group(0))
+                  )
 
           encontrados.sort()
 
-          print("Ocorrencias encontradas:", len(encontrados))
-          print("")
-
-          if not encontrados:
-              print("[?] Nenhum termo relacionado ao contador foi encontrado.")
-              print("")
-              print("Pode ser que o nome das variaveis seja diferente.")
-              raise SystemExit(0)
-
-          usados = set()
-          contador = 0
+          vistos = set()
+          total = 0
 
           for pos, termo in encontrados:
 
-              # Evita mostrar varias vezes praticamente o mesmo trecho
-              bloco = pos // 600
-
-              if bloco in usados:
-                  continue
-
-              usados.add(bloco)
-
-              inicio = max(0, pos - 350)
-              fim = min(len(js), pos + 650)
+              inicio = max(0, pos - 700)
+              fim = min(len(js), pos + 1000)
 
               trecho = js[inicio:fim]
 
-              # Quebra um pouco o JavaScript para facilitar a leitura
-              trecho = re.sub(
-                  r'[{}]',
-                  lambda m: m.group(0) + "\n",
-                  trecho
-              )
-
-              trecho = re.sub(
-                  r';',
-                  ';\n',
-                  trecho
-              )
-
-              print("----------------------------------------")
-              print("TERMO ENCONTRADO:", termo)
-              print("POSICAO:", pos)
-              print("----------------------------------------")
-              print(trecho[:1400])
-              print("")
-
-              contador += 1
-
-              if contador >= 20:
-                  break
-
-          print("========================================")
-          print("FIM DA ANALISE")
-          print("========================================")
-          print("")
-          print("Foram mostrados no maximo 20 trechos relevantes.")
-          PY
-
-      - name: Procurar elementos de interface relacionados ao tempo
-        shell: bash
-        run: |
-          python3 <<'PY'
-          import re
-
-          js = open(
-              "/tmp/game.js",
-              encoding="utf-8",
-              errors="ignore"
-          ).read()
-
-          print("")
-          print("========================================")
-          print("ELEMENTOS DA INTERFACE")
-          print("========================================")
-
-          padroes = [
-              r'getElementById\([^)]*\)',
-              r'querySelector\([^)]*\)',
-              r'querySelectorAll\([^)]*\)',
-              r'innerText\s*=',
-              r'textContent\s*=',
-              r'innerHTML\s*=',
-              r'createElement\([^)]*\)'
-          ]
-
-          achados = []
-
-          for padrao in padroes:
-              for m in re.finditer(padrao, js, re.I):
-                  trecho = js[
-                      max(0, m.start() - 180):
-                      min(len(js), m.end() + 300)
-                  ]
-
-                  baixo = trecho.lower()
-
-                  if any(
-                      x in baixo
-                      for x in [
-                          "timer",
-                          "tempo",
-                          "time",
-                          "fase",
-                          "phase",
-                          "second",
-                          "countdown",
-                          "remaining"
-                      ]
-                  ):
-                      achados.append(trecho)
-
-          vistos = set()
-          contador = 0
-
-          for trecho in achados:
-              chave = trecho[:250]
+              # Evita trechos duplicados
+              chave = trecho[:300]
 
               if chave in vistos:
                   continue
@@ -283,20 +121,130 @@ jobs:
 
               print("")
               print("----------------------------------------")
-              print(trecho[:700])
+              print("TERMO:", termo)
+              print("POSICAO:", pos)
               print("----------------------------------------")
 
-              contador += 1
+              # Quebra o codigo para facilitar a leitura
+              trecho = re.sub(r'[{}]', r'\g<0>\n', trecho)
+              trecho = re.sub(r';', ';\n', trecho)
 
-              if contador >= 15:
+              print(trecho[:1800])
+
+              total += 1
+
+              if total >= 30:
                   break
 
-          if contador == 0:
-              print("")
-              print("[?] Nenhum elemento de interface claramente relacionado ao tempo foi encontrado.")
+          print("")
+          print("Total de trechos mostrados:", total)
+          PY
+
+      - name: Procurar variaveis de tempo
+        run: |
+          python3 <<'PY'
+          import re
+
+          js = open(
+              "/tmp/game.js",
+              encoding="utf-8",
+              errors="ignore"
+          ).read()
 
           print("")
           print("========================================")
-          print("ANALISE CONCLUIDA")
+          print("VARIAVEIS E CALCULOS DE TEMPO")
           print("========================================")
+
+          padroes = [
+              r'\btime\b',
+              r'\btimer\b',
+              r'\belapsed\b',
+              r'\bremaining\b',
+              r'\btimeLeft\b',
+              r'\btimeRemaining\b',
+              r'\bstartTime\b',
+              r'\bendTime\b',
+              r'\bstartTimestamp\b',
+              r'\bDate\.now',
+              r'\bperformance\.now',
+              r'\bsetInterval',
+              r'\brequestAnimationFrame'
+          ]
+
+          resultados = []
+
+          for padrao in padroes:
+              for m in re.finditer(padrao, js, re.I):
+                  resultados.append(
+                      (m.start(), m.group(0))
+                  )
+
+          resultados.sort()
+
+          usados = set()
+          total = 0
+
+          for pos, termo in resultados:
+
+              inicio = max(0, pos - 450)
+              fim = min(len(js), pos + 700)
+
+              trecho = js[inicio:fim]
+
+              # Mostra somente trechos que parecem realmente
+              # relacionados ao tempo da partida
+              baixo = trecho.lower()
+
+              palavras = [
+                  "hudtimer",
+                  "formattime",
+                  "elapsed",
+                  "remaining",
+                  "starttime",
+                  "endtime",
+                  "setinterval",
+                  "requestanimationframe",
+                  "seconds"
+              ]
+
+              if not any(p in baixo for p in palavras):
+                  continue
+
+              chave = trecho[:250]
+
+              if chave in usados:
+                  continue
+
+              usados.add(chave)
+
+              print("")
+              print("----------------------------------------")
+              print("TERMO:", termo)
+              print("POSICAO:", pos)
+              print("----------------------------------------")
+
+              trecho = re.sub(r'[{}]', r'\g<0>\n', trecho)
+              trecho = re.sub(r';', ';\n', trecho)
+
+              print(trecho[:1600])
+
+              total += 1
+
+              if total >= 25:
+                  break
+
+          print("")
+          print("Trechos de calculo mostrados:", total)
           PY
+
+      - name: Final
+        run: |
+          echo ""
+          echo "========================================"
+          echo "ANALISE TERMINADA"
+          echo "========================================"
+          echo ""
+          echo "O jogo nao foi alterado."
+          echo "Agora precisamos identificar a variavel"
+          echo "que controla o tempo durante a partida."
