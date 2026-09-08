@@ -1,4 +1,4 @@
-name: Diagnostico completo
+name: Analisar contador
 
 on:
   workflow_dispatch:
@@ -11,126 +11,125 @@ jobs:
       - name: Baixar projeto
         uses: actions/checkout@v5
 
-      - name: Mostrar estrutura do projeto
+      - name: Verificar index.html
         run: |
           echo "========================================"
-          echo "ESTRUTURA DO PROJETO"
+          echo "ANALISANDO INDEX.HTML"
           echo "========================================"
 
-          find . -type f \
-            ! -path './.git/*' \
-            ! -path './node_modules/*' \
-            -print | sort | head -500
+          echo ""
+          echo "Tamanho do arquivo:"
+          wc -c index.html
 
-      - name: Procurar codigo relacionado ao tempo
+          echo ""
+          echo "Quantidade de linhas:"
+          wc -l index.html
+
+      - name: Procurar codigo de tempo no index.html
         shell: bash
         run: |
           echo ""
           echo "========================================"
-          echo "PROCURANDO CODIGO DO CONTADOR"
+          echo "TERMOS ENCONTRADOS NO INDEX.HTML"
           echo "========================================"
 
-          echo ""
-          echo "--- elapsed ---"
-          grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            --exclude='package-lock.json' \
-            --exclude='yarn.lock' \
-            --exclude='pnpm-lock.yaml' \
-            '\belapsed\b' . 2>/dev/null | head -100 || true
+          for termo in \
+            elapsed \
+            targetTime \
+            formatTime \
+            timer \
+            countdown \
+            remaining \
+            timeLeft \
+            timeRemaining \
+            duration \
+            seconds \
+            milliseconds \
+            setInterval \
+            setTimeout \
+            Date.now \
+            performance.now
+          do
+            echo ""
+            echo "---------- $termo ----------"
 
-          echo ""
-          echo "--- targetTime ---"
-          grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            --exclude='package-lock.json' \
-            --exclude='yarn.lock' \
-            --exclude='pnpm-lock.yaml' \
-            '\btargetTime\b' . 2>/dev/null | head -100 || true
+            grep -niE "$termo" index.html 2>/dev/null \
+              | head -30 || true
+          done
 
-          echo ""
-          echo "--- formatTime ---"
-          grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            --exclude='package-lock.json' \
-            --exclude='yarn.lock' \
-            --exclude='pnpm-lock.yaml' \
-            '\bformatTime\b' . 2>/dev/null | head -100 || true
-
-          echo ""
-          echo "--- timer ---"
-          grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            'timer|countdown|countdownTimer|gameTimer' . 2>/dev/null | head -150 || true
-
-          echo ""
-          echo "--- tempo/time ---"
-          grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            'tempo|time|seconds|milliseconds|duration' . 2>/dev/null | head -200 || true
-
-      - name: Procurar valores grandes de tempo
+      - name: Procurar numeros relacionados ao contador
         shell: bash
         run: |
           echo ""
           echo "========================================"
-          echo "PROCURANDO VALORES RELACIONADOS AO TEMPO"
+          echo "NUMEROS DE TEMPO NO INDEX.HTML"
           echo "========================================"
 
-          grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            '99999|999999|60000|30000|600|300|60' . 2>/dev/null \
-            | head -200 || true
+          grep -niE \
+            '99999|999999|60000|30000|10000|5000|3000|1000|600|300|120|60|30|10|5' \
+            index.html 2>/dev/null \
+            | head -100 || true
 
-      - name: Procurar contadores visuais
+      - name: Mostrar partes JavaScript
         shell: bash
         run: |
           echo ""
           echo "========================================"
-          echo "PROCURANDO TEXTO DO CONTADOR"
+          echo "JAVASCRIPT DO INDEX.HTML"
           echo "========================================"
 
-          grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            '00:00|0:00|remaining|remainingTime|timeLeft|timeRemaining|countdown|countDown|timerText' . 2>/dev/null \
-            | head -200 || true
+          python3 <<'PY'
+          import re
 
-      - name: Identificar arquivos JavaScript
-        shell: bash
+          with open("index.html", "r", encoding="utf-8", errors="ignore") as f:
+              html = f.read()
+
+          scripts = re.findall(
+              r"<script[^>]*>(.*?)</script>",
+              html,
+              flags=re.I | re.S
+          )
+
+          print("Quantidade de blocos JavaScript:", len(scripts))
+
+          for i, script in enumerate(scripts, 1):
+              print()
+              print("=" * 60)
+              print("BLOCO JAVASCRIPT", i)
+              print("=" * 60)
+
+              linhas = script.splitlines()
+
+              for numero, linha in enumerate(linhas, 1):
+                  if re.search(
+                      r"elapsed|targetTime|formatTime|timer|countdown|"
+                      r"remaining|timeLeft|timeRemaining|duration|seconds|"
+                      r"setInterval|setTimeout|Date\.now|performance\.now",
+                      linha,
+                      re.I
+                  ):
+                      inicio = max(0, numero - 5)
+                      fim = min(len(linhas), numero + 5)
+
+                      print()
+                      print(
+                          f"--- linhas {inicio + 1} até {fim} ---"
+                      )
+
+                      for n in range(inicio, fim):
+                          print(f"{n + 1}: {linhas[n]}")
+          PY
+
+      - name: Final
         run: |
           echo ""
           echo "========================================"
-          echo "ARQUIVOS JAVASCRIPT/TYPESCRIPT"
-          echo "========================================"
-
-          find . -type f \
-            \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.html' \) \
-            ! -path './.git/*' \
-            ! -path './node_modules/*' \
-            -print | sort
-
-      - name: Diagnostico final
-        run: |
-          echo ""
-          echo "========================================"
-          echo "DIAGNOSTICO TERMINADO"
+          echo "ANALISE CONCLUIDA"
           echo "========================================"
           echo ""
-          echo "IMPORTANTE:"
-          echo "Este workflow nao modifica o jogo."
-          echo "Este workflow nao gera APK."
-          echo "Este workflow nao falha se uma palavra nao for encontrada."
+          echo "Nenhuma alteracao foi feita no jogo."
+          echo "Nenhum APK foi gerado."
           echo ""
-          echo "Procure nos logs pelas secoes:"
-          echo "PROCURANDO CODIGO DO CONTADOR"
-          echo "PROCURANDO VALORES RELACIONADOS AO TEMPO"
-          echo "PROCURANDO TEXTO DO CONTADOR"
-          echo ""
+          echo "Procure no log pelo passo:"
+          echo "JAVASCRIPT DO INDEX.HTML"
           echo "========================================"
