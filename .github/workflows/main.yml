@@ -1,4 +1,4 @@
-name: Analisar contador
+name: Descobrir origem do jogo
 
 on:
   workflow_dispatch:
@@ -11,125 +11,52 @@ jobs:
       - name: Baixar projeto
         uses: actions/checkout@v5
 
-      - name: Verificar index.html
+      - name: Analisar index.html
         run: |
           echo "========================================"
-          echo "ANALISANDO INDEX.HTML"
+          echo "CONTEUDO DO INDEX.HTML"
           echo "========================================"
 
-          echo ""
-          echo "Tamanho do arquivo:"
-          wc -c index.html
+          cat index.html
 
-          echo ""
-          echo "Quantidade de linhas:"
-          wc -l index.html
-
-      - name: Procurar codigo de tempo no index.html
+      - name: Procurar recursos externos
         shell: bash
         run: |
           echo ""
           echo "========================================"
-          echo "TERMOS ENCONTRADOS NO INDEX.HTML"
-          echo "========================================"
-
-          for termo in \
-            elapsed \
-            targetTime \
-            formatTime \
-            timer \
-            countdown \
-            remaining \
-            timeLeft \
-            timeRemaining \
-            duration \
-            seconds \
-            milliseconds \
-            setInterval \
-            setTimeout \
-            Date.now \
-            performance.now
-          do
-            echo ""
-            echo "---------- $termo ----------"
-
-            grep -niE "$termo" index.html 2>/dev/null \
-              | head -30 || true
-          done
-
-      - name: Procurar numeros relacionados ao contador
-        shell: bash
-        run: |
-          echo ""
-          echo "========================================"
-          echo "NUMEROS DE TEMPO NO INDEX.HTML"
+          echo "SCRIPTS EXTERNOS"
           echo "========================================"
 
           grep -niE \
-            '99999|999999|60000|30000|10000|5000|3000|1000|600|300|120|60|30|10|5' \
-            index.html 2>/dev/null \
-            | head -100 || true
+            '<script|src=|iframe|frame|embed|object|import|module' \
+            index.html 2>/dev/null || true
 
-      - name: Mostrar partes JavaScript
-        shell: bash
+          echo ""
+          echo "========================================"
+          echo "URLS ENCONTRADAS"
+          echo "========================================"
+
+          grep -oE \
+            'https?://[^"'\'' <>]+' \
+            index.html 2>/dev/null \
+            | sort -u || true
+
+      - name: Procurar arquivos JavaScript no projeto
         run: |
           echo ""
           echo "========================================"
-          echo "JAVASCRIPT DO INDEX.HTML"
+          echo "ARQUIVOS JS ENCONTRADOS"
           echo "========================================"
 
-          python3 <<'PY'
-          import re
-
-          with open("index.html", "r", encoding="utf-8", errors="ignore") as f:
-              html = f.read()
-
-          scripts = re.findall(
-              r"<script[^>]*>(.*?)</script>",
-              html,
-              flags=re.I | re.S
-          )
-
-          print("Quantidade de blocos JavaScript:", len(scripts))
-
-          for i, script in enumerate(scripts, 1):
-              print()
-              print("=" * 60)
-              print("BLOCO JAVASCRIPT", i)
-              print("=" * 60)
-
-              linhas = script.splitlines()
-
-              for numero, linha in enumerate(linhas, 1):
-                  if re.search(
-                      r"elapsed|targetTime|formatTime|timer|countdown|"
-                      r"remaining|timeLeft|timeRemaining|duration|seconds|"
-                      r"setInterval|setTimeout|Date\.now|performance\.now",
-                      linha,
-                      re.I
-                  ):
-                      inicio = max(0, numero - 5)
-                      fim = min(len(linhas), numero + 5)
-
-                      print()
-                      print(
-                          f"--- linhas {inicio + 1} até {fim} ---"
-                      )
-
-                      for n in range(inicio, fim):
-                          print(f"{n + 1}: {linhas[n]}")
-          PY
+          find . -type f \
+            \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) \
+            ! -path './.git/*' \
+            ! -path './node_modules/*' \
+            -print
 
       - name: Final
         run: |
           echo ""
           echo "========================================"
-          echo "ANALISE CONCLUIDA"
-          echo "========================================"
-          echo ""
-          echo "Nenhuma alteracao foi feita no jogo."
-          echo "Nenhum APK foi gerado."
-          echo ""
-          echo "Procure no log pelo passo:"
-          echo "JAVASCRIPT DO INDEX.HTML"
+          echo "DIAGNOSTICO CONCLUIDO"
           echo "========================================"
