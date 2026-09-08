@@ -1,4 +1,4 @@
-name: Diagnostico do jogo
+name: Diagnostico completo
 
 on:
   workflow_dispatch:
@@ -9,124 +9,128 @@ jobs:
 
     steps:
       - name: Baixar projeto
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Preparar ambiente
+      - name: Mostrar estrutura do projeto
         run: |
           echo "========================================"
-          echo "INICIANDO DIAGNOSTICO"
+          echo "ESTRUTURA DO PROJETO"
           echo "========================================"
-          echo ""
-          echo "Arquivos do projeto:"
-          find . -maxdepth 3 -type f \
+
+          find . -type f \
             ! -path './.git/*' \
-            -print | sort | head -300
+            ! -path './node_modules/*' \
+            -print | sort | head -500
 
-      - name: Procurar elapsed
+      - name: Procurar codigo relacionado ao tempo
         shell: bash
         run: |
           echo ""
           echo "========================================"
-          echo "PROCURANDO: elapsed"
+          echo "PROCURANDO CODIGO DO CONTADOR"
           echo "========================================"
 
-          if grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            --exclude='package-lock.json' \
-            --exclude='yarn.lock' \
-            --exclude='pnpm-lock.yaml' \
-            "elapsed" . > /tmp/elapsed.txt 2>/dev/null; then
-
-            echo "Encontrado:"
-            cat /tmp/elapsed.txt | head -100
-          else
-            echo "Nenhuma ocorrência de 'elapsed' encontrada."
-          fi
-
-      - name: Procurar targetTime
-        shell: bash
-        run: |
           echo ""
-          echo "========================================"
-          echo "PROCURANDO: targetTime"
-          echo "========================================"
-
-          if grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            --exclude='package-lock.json' \
-            --exclude='yarn.lock' \
-            --exclude='pnpm-lock.yaml' \
-            "targetTime" . > /tmp/targetTime.txt 2>/dev/null; then
-
-            echo "Encontrado:"
-            cat /tmp/targetTime.txt | head -100
-          else
-            echo "Nenhuma ocorrência de 'targetTime' encontrada."
-          fi
-
-      - name: Procurar formatTime
-        shell: bash
-        run: |
-          echo ""
-          echo "========================================"
-          echo "PROCURANDO: formatTime"
-          echo "========================================"
-
-          if grep -RniE \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            --exclude='package-lock.json' \
-            --exclude='yarn.lock' \
-            --exclude='pnpm-lock.yaml' \
-            "formatTime" . > /tmp/formatTime.txt 2>/dev/null; then
-
-            echo "Encontrado:"
-            cat /tmp/formatTime.txt | head -100
-          else
-            echo "Nenhuma ocorrência de 'formatTime' encontrada."
-          fi
-
-      - name: Procurar palavras relacionadas ao contador
-        shell: bash
-        run: |
-          echo ""
-          echo "========================================"
-          echo "PROCURANDO TERMOS DO CONTADOR"
-          echo "========================================"
-
+          echo "--- elapsed ---"
           grep -RniE \
             --exclude-dir=.git \
             --exclude-dir=node_modules \
             --exclude='package-lock.json' \
             --exclude='yarn.lock' \
             --exclude='pnpm-lock.yaml' \
-            "timer|countdown|count|time|tempo|elapsed|targetTime|formatTime" . \
-            > /tmp/timer.txt 2>/dev/null || true
+            '\belapsed\b' . 2>/dev/null | head -100 || true
 
-          if [ -s /tmp/timer.txt ]; then
-            echo "Ocorrências encontradas:"
-            cat /tmp/timer.txt | head -200
-          else
-            echo "Nenhum termo relacionado encontrado."
-          fi
+          echo ""
+          echo "--- targetTime ---"
+          grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude='package-lock.json' \
+            --exclude='yarn.lock' \
+            --exclude='pnpm-lock.yaml' \
+            '\btargetTime\b' . 2>/dev/null | head -100 || true
 
-      - name: Diagnostico final
+          echo ""
+          echo "--- formatTime ---"
+          grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude='package-lock.json' \
+            --exclude='yarn.lock' \
+            --exclude='pnpm-lock.yaml' \
+            '\bformatTime\b' . 2>/dev/null | head -100 || true
+
+          echo ""
+          echo "--- timer ---"
+          grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            'timer|countdown|countdownTimer|gameTimer' . 2>/dev/null | head -150 || true
+
+          echo ""
+          echo "--- tempo/time ---"
+          grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            'tempo|time|seconds|milliseconds|duration' . 2>/dev/null | head -200 || true
+
+      - name: Procurar valores grandes de tempo
         shell: bash
         run: |
           echo ""
           echo "========================================"
-          echo "DIAGNOSTICO CONCLUIDO"
+          echo "PROCURANDO VALORES RELACIONADOS AO TEMPO"
+          echo "========================================"
+
+          grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            '99999|999999|60000|30000|600|300|60' . 2>/dev/null \
+            | head -200 || true
+
+      - name: Procurar contadores visuais
+        shell: bash
+        run: |
+          echo ""
+          echo "========================================"
+          echo "PROCURANDO TEXTO DO CONTADOR"
+          echo "========================================"
+
+          grep -RniE \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            '00:00|0:00|remaining|remainingTime|timeLeft|timeRemaining|countdown|countDown|timerText' . 2>/dev/null \
+            | head -200 || true
+
+      - name: Identificar arquivos JavaScript
+        shell: bash
+        run: |
+          echo ""
+          echo "========================================"
+          echo "ARQUIVOS JAVASCRIPT/TYPESCRIPT"
+          echo "========================================"
+
+          find . -type f \
+            \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.html' \) \
+            ! -path './.git/*' \
+            ! -path './node_modules/*' \
+            -print | sort
+
+      - name: Diagnostico final
+        run: |
+          echo ""
+          echo "========================================"
+          echo "DIAGNOSTICO TERMINADO"
           echo "========================================"
           echo ""
-          echo "O workflow chegou ao final sem cancelar"
-          echo "porque uma palavra não foi encontrada."
+          echo "IMPORTANTE:"
+          echo "Este workflow nao modifica o jogo."
+          echo "Este workflow nao gera APK."
+          echo "Este workflow nao falha se uma palavra nao for encontrada."
           echo ""
-          echo "Agora procure no log pelas seções:"
-          echo "  PROCURANDO: elapsed"
-          echo "  PROCURANDO: targetTime"
-          echo "  PROCURANDO: formatTime"
-          echo "  PROCURANDO TERMOS DO CONTADOR"
+          echo "Procure nos logs pelas secoes:"
+          echo "PROCURANDO CODIGO DO CONTADOR"
+          echo "PROCURANDO VALORES RELACIONADOS AO TEMPO"
+          echo "PROCURANDO TEXTO DO CONTADOR"
           echo ""
           echo "========================================"
