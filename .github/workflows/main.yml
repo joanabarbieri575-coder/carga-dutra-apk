@@ -1,4 +1,4 @@
-name: Encontrar atualizacao do contador
+name: Localizar timer da partida
 
 on:
   workflow_dispatch:
@@ -33,13 +33,15 @@ jobs:
               re.I
           )
 
-          script = next(
-              (s for s in scripts if s.startswith("data:text/javascript")),
-              None
-          )
+          script = None
+
+          for src in scripts:
+              if src.startswith("data:text/javascript"):
+                  script = src
+                  break
 
           if not script:
-              print("ERRO: script do jogo nao encontrado.")
+              print("ERRO: script nao encontrado.")
               raise SystemExit(0)
 
           header, data = script.split(",", 1)
@@ -59,10 +61,11 @@ jobs:
               encoding="utf-8"
           ).write(js)
 
-          print("JavaScript decodificado:", len(js), "caracteres")
+          print("JavaScript decodificado.")
+          print("Tamanho:", len(js), "caracteres")
           PY
 
-      - name: Procurar atualizacao do HUD Timer
+      - name: Procurar escrita do HUD Timer
         run: |
           python3 <<'PY'
           import re
@@ -75,52 +78,44 @@ jobs:
 
           print("")
           print("========================================")
-          print("ATUALIZACOES DO HUD TIMER")
+          print("ESCRITAS NO HUD TIMER")
           print("========================================")
 
           padroes = [
-              r'ui\.hudTimer',
-              r'hudTimer\.textContent',
-              r'hudTimer\.innerText',
-              r'hudTimer\.innerHTML',
-              r'formatTime\(',
-              r'formatTime\s*\('
+              r'hudTimer\s*\.',
+              r'ui\s*\.\s*hudTimer\s*\.',
+              r'\[\s*["\']hudTimer["\']\s*\]',
+              r'["\']#hudTimer["\']',
+              r'hudTimer\s*='
           ]
 
-          resultados = []
+          encontrados = []
 
           for padrao in padroes:
               for m in re.finditer(padrao, js, re.I):
-                  resultados.append(
+                  encontrados.append(
                       (m.start(), m.group(0))
                   )
 
-          resultados.sort()
-
-          if not resultados:
-              print("NENHUMA REFERENCIA ENCONTRADA.")
-              raise SystemExit(0)
+          encontrados.sort()
 
           vistos = set()
           total = 0
 
-          for pos, termo in resultados:
+          for pos, termo in encontrados:
 
-              inicio = max(0, pos - 1000)
-              fim = min(len(js), pos + 1400)
+              inicio = max(0, pos - 1200)
+              fim = min(len(js), pos + 1800)
 
               trecho = js[inicio:fim]
 
-              # Remove excesso de espacos
+              # Limita o tamanho mesmo se o JS estiver minificado
               trecho = re.sub(r'\s+', ' ', trecho)
-
-              # Cria quebras para facilitar a leitura
               trecho = trecho.replace(';', ';\n')
               trecho = trecho.replace('{', '{\n')
               trecho = trecho.replace('}', '}\n')
 
-              # Evita duplicatas
-              chave = trecho[:500]
+              chave = trecho[:700]
 
               if chave in vistos:
                   continue
@@ -132,18 +127,18 @@ jobs:
               print("TERMO:", termo)
               print("POSICAO:", pos)
               print("----------------------------------------")
-              print(trecho[:2600])
+              print(trecho[:3200])
 
               total += 1
 
-              if total >= 25:
+              if total >= 20:
                   break
 
           print("")
-          print("Total de referencias mostradas:", total)
+          print("Total:", total)
           PY
 
-      - name: Procurar chamadas de formatTime
+      - name: Procurar loop da partida
         run: |
           python3 <<'PY'
           import re
@@ -156,38 +151,173 @@ jobs:
 
           print("")
           print("========================================")
-          print("CHAMADAS formatTime")
+          print("LOOP DA PARTIDA E TEMPO")
           print("========================================")
 
-          encontrados = list(
-              re.finditer(
-                  r'formatTime\s*\(',
-                  js,
-                  re.I
-              )
-          )
+          termos = [
+              "requestAnimationFrame",
+              "simulator.update",
+              "simulator.step",
+              "elapsed",
+              "deltaTime",
+              "delta",
+              "dt",
+              "Date.now()",
+              "performance.now()",
+              "setInterval",
+              "startTime",
+              "startTimestamp",
+              "levelStart",
+              "levelStarted"
+          ]
 
-          print("Quantidade:", len(encontrados))
+          encontrados = []
 
-          for i, m in enumerate(encontrados[:30], 1):
+          for termo in termos:
+              inicio = 0
 
-              inicio = max(0, m.start() - 900)
-              fim = min(len(js), m.start() + 1500)
+              while True:
+                  pos = js.lower().find(termo.lower(), inicio)
+
+                  if pos == -1:
+                      break
+
+                  encontrados.append(
+                      (pos, termo)
+                  )
+
+                  inicio = pos + len(termo)
+
+          encontrados.sort()
+
+          vistos = set()
+          total = 0
+
+          for pos, termo in encontrados:
+
+              inicio = max(0, pos - 900)
+              fim = min(len(js), pos + 1500)
 
               trecho = js[inicio:fim]
 
+              baixo = trecho.lower()
+
+              # Priorizamos trechos que também tenham relação
+              # com partida, HUD ou tempo.
+              importantes = [
+                  "hudtimer",
+                  "elapsed",
+                  "timer",
+                  "simulator",
+                  "level",
+                  "time",
+                  "seconds",
+                  "delta"
+              ]
+
+              if not any(x in baixo for x in importantes):
+                  continue
+
               trecho = re.sub(r'\s+', ' ', trecho)
               trecho = trecho.replace(';', ';\n')
+              trecho = trecho.replace('{', '{\n')
+              trecho = trecho.replace('}', '}\n')
+
+              chave = trecho[:600]
+
+              if chave in vistos:
+                  continue
+
+              vistos.add(chave)
 
               print("")
               print("----------------------------------------")
-              print("CHAMADA", i)
-              print("POSICAO:", m.start())
+              print("TERMO:", termo)
+              print("POSICAO:", pos)
               print("----------------------------------------")
-              print(trecho[:2400])
+              print(trecho[:2800])
+
+              total += 1
+
+              if total >= 30:
+                  break
+
+          print("")
+          print("Trechos mostrados:", total)
+          PY
+
+      - name: Procurar classes de simulacao
+        run: |
+          python3 <<'PY'
+          import re
+
+          js = open(
+              "/tmp/game.js",
+              encoding="utf-8",
+              errors="ignore"
+          ).read()
 
           print("")
           print("========================================")
-          print("FIM")
+          print("SIMULATOR")
           print("========================================")
+
+          padroes = [
+              r'class\s+\w*[Ss]imulator\w*',
+              r'new\s+\w*[Ss]imulator\w*',
+              r'simulator\s*=\s*new',
+              r'simulator\s*=\s*null'
+          ]
+
+          vistos = set()
+          total = 0
+
+          for padrao in padroes:
+
+              for m in re.finditer(padrao, js):
+
+                  pos = m.start()
+
+                  inicio = max(0, pos - 800)
+                  fim = min(len(js), pos + 1800)
+
+                  trecho = js[inicio:fim]
+
+                  trecho = re.sub(r'\s+', ' ', trecho)
+                  trecho = trecho.replace(';', ';\n')
+                  trecho = trecho.replace('{', '{\n')
+                  trecho = trecho.replace('}', '}\n')
+
+                  chave = trecho[:500]
+
+                  if chave in vistos:
+                      continue
+
+                  vistos.add(chave)
+
+                  print("")
+                  print("----------------------------------------")
+                  print("TERMO:", m.group(0))
+                  print("POSICAO:", pos)
+                  print("----------------------------------------")
+                  print(trecho[:3000])
+
+                  total += 1
+
+                  if total >= 20:
+                      break
+
+          print("")
+          print("Trechos encontrados:", total)
           PY
+
+      - name: Final
+        run: |
+          echo ""
+          echo "========================================"
+          echo "ANALISE CONCLUIDA"
+          echo "========================================"
+          echo ""
+          echo "O jogo ainda nao foi alterado."
+          echo "Agora temos que identificar a variavel"
+          echo "que alimenta o contador durante a partida."
