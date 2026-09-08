@@ -8,20 +8,102 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar projeto
-        uses: actions/checkout@v4
-
-      - name: Preparar Android
-        uses: android-actions/setup-android@v3
-
-      - name: Instalar ferramentas Android
+      - name: Baixar código do jogo
         run: |
-          yes | sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          mkdir -p app/src/main/assets
+          curl -L "https://cargadutra.netlify.app/" -o app/src/main/assets/game.html
+
+      - name: Modificar contador do jogo
+        run: |
+          python3 <<'PY'
+          import re
+          import base64
+
+          path = "app/src/main/assets/game.html"
+
+          with open(path, "r", encoding="utf-8") as f:
+              html = f.read()
+
+          # Localiza o módulo principal em data:
+          pattern = r'(src=["\']data:text/javascript;charset=utf-8;base64,)([A-Za-z0-9+/=]+)(["\'])'
+          match = re.search(pattern, html)
+
+          if not match:
+              raise Exception("Módulo principal do jogo não encontrado.")
+
+          main = base64.b64decode(match.group(2)).decode("utf-8")
+
+          # --------------------------------------------------
+          # 1. Coloca todos os tempos das fases em 99999
+          # --------------------------------------------------
+          nested = re.search(
+              r'data:text/javascript;charset=utf-8;base64,([A-Za-z0-9+/=]+)',
+              main
+          )
+
+          if nested:
+              config = base64.b64decode(nested.group(1)).decode("utf-8")
+
+              config = re.sub(
+                  r'targetTime\s*:\s*\d+',
+                  'targetTime: 99999',
+                  config
+              )
+
+              new_config = (
+                  'data:text/javascript;charset=utf-8;base64,' +
+                  base64.b64encode(config.encode("utf-8")).decode("ascii")
+              )
+
+              main = (
+                  main[:nested.start()] +
+                  new_config +
+                  main[nested.end():]
+              )
+
+          # --------------------------------------------------
+          # 2. Contador interno da partida = 99999
+          # --------------------------------------------------
+          main = main.replace(
+              'this.state.elapsed += dt;',
+              'this.state.elapsed = 99999;'
+          )
+
+          # --------------------------------------------------
+          # 3. Se o HUD usar formatTime(elapsed), força 99999
+          # --------------------------------------------------
+          main = main.replace(
+              'formatTime(this.state.elapsed)',
+              '"99999"'
+          )
+
+          # --------------------------------------------------
+          # 4. Salva o módulo modificado novamente em base64
+          # --------------------------------------------------
+          new_main = (
+              'data:text/javascript;charset=utf-8;base64,' +
+              base64.b64encode(main.encode("utf-8")).decode("ascii")
+          )
+
+          html = (
+              html[:match.start()] +
+              match.group(1) +
+              base64.b64encode(main.encode("utf-8")).decode("ascii") +
+              match.group(3) +
+              html[match.end():]
+          )
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(html)
+
+          print("JOGO MODIFICADO COM SUCESSO")
+          print("Contador interno: 99999")
+          print("Tempo das fases: 99999")
+          PY
 
       - name: Criar projeto Android
         run: |
-          mkdir -p app/src/main/java/com/cargadutra/app
-          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/java/com/cargadutra/apk
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -56,29 +138,22 @@ jobs:
           }
 
           android {
-              namespace 'com.cargadutra.app'
+              namespace 'com.cargadutra.apk'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.cargadutra.app'
+                  applicationId "com.cargadutra.apk"
                   minSdk 23
                   targetSdk 35
-                  versionCode 3
-                  versionName '3.0'
+                  versionCode 1
+                  versionName "1.0"
               }
           }
           EOF
 
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <resources>
-              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:windowFullscreen">true</item>
-              </style>
-          </resources>
-          EOF
-
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
               <uses-permission android:name="android.permission.INTERNET"/>
 
               <application
@@ -97,23 +172,39 @@ jobs:
                       </intent-filter>
 
                   </activity>
+
               </application>
+
           </manifest>
           EOF
 
-          cat > app/src/main/java/com/cargadutra/app/MainActivity.java <<'EOF'
-          package com.cargadutra.app;
+          mkdir -p app/src/main/res/values
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowFullscreen">true</item>
+                  <item name="android:colorAccent">#ffffff</item>
+              </style>
+          </resources>
+          EOF
+
+      - name: Criar MainActivity
+        run: |
+          cat > app/src/main/java/com/cargadutra/apk/MainActivity.java <<'EOF'
+          package com.cargadutra.apk;
 
           import android.app.Activity;
           import android.os.Bundle;
-          import android.webkit.WebView;
           import android.webkit.WebSettings;
+          import android.webkit.WebView;
           import android.webkit.WebViewClient;
+          import java.io.InputStream;
 
           public class MainActivity extends Activity {
 
               private WebView web;
-              private boolean prepared = false;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -124,18 +215,15 @@ jobs:
                   WebSettings settings = web.getSettings();
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
-                  settings.setDatabaseEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
                   settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setSupportZoom(false);
 
                   web.setWebViewClient(new WebViewClient() {
-
                       @Override
                       public void onPageFinished(WebView view, String url) {
                           super.onPageFinished(view, url);
-
-                          if (prepared) return;
-
-                          prepared = true;
 
                           String script =
                               "(function() {" +
@@ -144,7 +232,7 @@ jobs:
                               "let save={};" +
                               "try { save=JSON.parse(localStorage.getItem(key)||'{}'); } catch(e) {}" +
                               "save.unlockedLevel=30;" +
-                              "save.currentLevel=1;" +
+                              "save.currentLevel=30;" +
                               "save.totalDeliveries=999999;" +
                               "if(!Array.isArray(save.levels)) save.levels=[];" +
                               "for(let i=1;i<=30;i++) {" +
@@ -155,7 +243,6 @@ jobs:
                               "save.levels[i-1].bestScore=999999;" +
                               "}" +
                               "localStorage.setItem(key,JSON.stringify(save));" +
-                              "location.reload();" +
                               "} catch(e) {}" +
                               "})();";
 
@@ -163,8 +250,36 @@ jobs:
                       }
                   });
 
-                  web.loadUrl("https://cargadutra.netlify.app/");
                   setContentView(web);
+
+                  try {
+                      InputStream input = getAssets().open("game.html");
+                      byte[] data = new byte[input.available()];
+                      input.read(data);
+                      input.close();
+
+                      String html = new String(data, "UTF-8");
+
+                      web.loadDataWithBaseURL(
+                          "https://cargadutra.netlify.app/",
+                          html,
+                          "text/html",
+                          "UTF-8",
+                          null
+                      );
+
+                  } catch (Exception e) {
+                      e.printStackTrace();
+                  }
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (web != null && web.canGoBack()) {
+                      web.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
               }
           }
           EOF
@@ -175,10 +290,11 @@ jobs:
           gradle-version: "8.11.1"
 
       - name: Gerar APK
-        run: gradle assembleDebug
+        run: |
+          gradle assembleDebug --no-daemon
 
-      - name: Disponibilizar APK
+      - name: Enviar APK
         uses: actions/upload-artifact@v4
         with:
-          name: carga-dutra-apk-fases
+          name: carga-dutra-apk-99999
           path: app/build/outputs/apk/debug/app-debug.apk
