@@ -1,4 +1,4 @@
-name: Encontrar Simulator e getHUD
+name: Gerar Carga Dutra Modificado
 
 on:
   workflow_dispatch:
@@ -8,282 +8,291 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar jogo
+      - name: Baixar jogo original
         run: |
-          curl -L --max-time 60 -s \
+          curl -L --fail --max-time 120 \
             "https://cargadutra.netlify.app/" \
-            -o /tmp/index.html
+            -o original.html
 
-      - name: Decodificar módulos
+          echo "HTML baixado:"
+          wc -c original.html
+
+      - name: Modificar jogo e reconstruir módulos
         run: |
           python3 <<'PY'
           import re
           import base64
           import urllib.parse
+          import os
+
+          HTML = "original.html"
+          OUT = "dist"
+
+          os.makedirs(OUT, exist_ok=True)
 
           html = open(
-              "/tmp/index.html",
+              HTML,
+              "r",
               encoding="utf-8",
               errors="ignore"
           ).read()
 
+          def decode_data_url(url):
+              header, data = url.split(",", 1)
+
+              data = urllib.parse.unquote(data)
+
+              if ";base64" in header.lower():
+                  raw = base64.b64decode(data)
+                  return raw.decode("utf-8", errors="ignore")
+
+              return data
+
+          def encode_data_url(text):
+              raw = text.encode("utf-8")
+              encoded = base64.b64encode(raw).decode("ascii")
+              return "data:text/javascript;charset=utf-8;base64," + encoded
+
+          # Encontra o script principal
           scripts = re.findall(
               r'<script[^>]+src=["\']([^"\']+)["\']',
               html,
               re.I
           )
 
-          def decode(url):
-              try:
-                  header, data = url.split(",", 1)
-                  data = urllib.parse.unquote(data)
-
-                  if ";base64" in header.lower():
-                      return base64.b64decode(data).decode(
-                          "utf-8",
-                          errors="ignore"
-                      )
-
-                  return data
-              except:
-                  return ""
-
-          principal = None
+          principal_url = None
 
           for src in scripts:
               if src.startswith("data:text/javascript"):
-                  principal = src
+                  principal_url = src
                   break
 
-          if not principal:
-              print("ERRO: modulo principal nao encontrado.")
-              raise SystemExit(1)
+          if not principal_url:
+              raise SystemExit(
+                  "ERRO: script principal data:text/javascript não encontrado."
+              )
 
-          principal_js = decode(principal)
+          print("Script principal encontrado.")
 
-          arquivos = [("principal", principal_js)]
-          fila = re.findall(
-              r'(?:from|import)\s*[\'"]?(data:text/javascript[^\'"\s]+)',
-              principal_js,
+          # Cache para não decodificar o mesmo módulo várias vezes
+          cache = {}
+
+          def process_module(url, depth=0):
+              if url in cache:
+                  return cache[url]
+
+              js = decode_data_url(url)
+
+              indent = "  " * depth
+              print(indent + "Módulo:", len(js), "bytes")
+
+              # Primeiro processa módulos importados.
+              pattern = re.compile(
+                  r'(?P<prefix>(?:from|import)\s*[\'"])(?P<url>data:text/javascript[^\'"]+)(?P<suffix>[\'"])',
+                  re.I
+              )
+
+              def replace_import(match):
+                  old_url = match.group("url")
+
+                  try:
+                      new_url = process_module(
+                          old_url,
+                          depth + 1
+                      )
+                      return (
+                          match.group("prefix")
+                          + new_url
+                          + match.group("suffix")
+                      )
+                  except Exception as e:
+                      print(
+                          indent +
+                          "ERRO processando módulo:",
+                          e
+                      )
+                      raise
+
+              js = pattern.sub(replace_import, js)
+
+              # Modificação do TIMER REAL
+              antigo = "this.state.elapsed += dt;"
+              novo = "this.state.elapsed = 99999;"
+
+              quantidade = js.count(antigo)
+
+              if quantidade:
+                  print(
+                      indent +
+                      "Timer encontrado:",
+                      quantidade,
+                      "ocorrencia(s)"
+                  )
+
+                  js = js.replace(
+                      antigo,
+                      novo
+                  )
+
+              # Também fazemos o HUD mostrar literalmente 99999.
+              antigo_hud = "ui.hudTimer.textContent = formatTime(hud.elapsed);"
+              novo_hud = "ui.hudTimer.textContent = '99999';"
+
+              if antigo_hud in js:
+                  print(
+                      indent +
+                      "HUD do timer encontrado."
+                  )
+
+                  js = js.replace(
+                      antigo_hud,
+                      novo_hud,
+                      1
+                  )
+
+              new_url = encode_data_url(js)
+
+              cache[url] = new_url
+
+              return new_url
+
+          # Reconstrói o principal
+          principal_js = decode_data_url(principal_url)
+
+          print("")
+          print("Processando módulos do jogo...")
+
+          # Processa os imports do principal
+          pattern_principal = re.compile(
+              r'(?P<prefix>(?:from|import)\s*[\'"])(?P<url>data:text/javascript[^\'"]+)(?P<suffix>[\'"])',
               re.I
           )
 
-          vistos = set()
+          def replace_principal_import(match):
+              old_url = match.group("url")
 
-          while fila:
-              url = fila.pop(0)
-
-              if url in vistos:
-                  continue
-
-              vistos.add(url)
-
-              js = decode(url)
-
-              if not js:
-                  continue
-
-              nome = f"modulo_{len(arquivos)}"
-
-              arquivos.append((nome, js))
-
-              novos = re.findall(
-                  r'(?:from|import)\s*[\'"]?(data:text/javascript[^\'"\s]+)',
-                  js,
-                  re.I
+              return (
+                  match.group("prefix")
+                  + process_module(old_url, 1)
+                  + match.group("suffix")
               )
 
-              for novo in novos:
-                  if novo not in vistos:
-                      fila.append(novo)
+          principal_js = pattern_principal.sub(
+              replace_principal_import,
+              principal_js
+          )
 
-          with open(
-              "/tmp/todos_modulos.js",
+          # Garantia extra:
+          # se o principal também possuir o incremento diretamente.
+          if "this.state.elapsed += dt;" in principal_js:
+              principal_js = principal_js.replace(
+                  "this.state.elapsed += dt;",
+                  "this.state.elapsed = 99999;"
+              )
+
+          # HUD literal
+          if "ui.hudTimer.textContent = formatTime(hud.elapsed);" in principal_js:
+              principal_js = principal_js.replace(
+                  "ui.hudTimer.textContent = formatTime(hud.elapsed);",
+                  "ui.hudTimer.textContent = '99999';",
+                  1
+              )
+
+          # Recoloca o principal modificado no HTML.
+          novo_principal = encode_data_url(principal_js)
+
+          html_final = html.replace(
+              principal_url,
+              novo_principal,
+              1
+          )
+
+          if html_final == html:
+              raise SystemExit(
+                  "ERRO: não foi possível substituir o script principal."
+              )
+
+          # Verificação final
+          total_timer = (
+              html_final.count(
+                  "this.state.elapsed = 99999;"
+              )
+          )
+
+          total_hud = (
+              html_final.count(
+                  "ui.hudTimer.textContent = '99999';"
+              )
+          )
+
+          print("")
+          print("========================================")
+          print("VERIFICAÇÃO")
+          print("========================================")
+          print("Timer real encontrado:", total_timer)
+          print("HUD 99999 encontrado:", total_hud)
+          print("Módulos processados:", len(cache))
+
+          if total_timer == 0:
+              raise SystemExit(
+                  "ERRO: alteração do timer não apareceu no HTML final."
+              )
+
+          if total_hud == 0:
+              print(
+                  "AVISO: HUD não foi encontrado; "
+                  "o timer interno foi alterado mesmo assim."
+              )
+
+          # Salva versão final
+          caminho_final = os.path.join(
+              OUT,
+              "index.html"
+          )
+
+          open(
+              caminho_final,
               "w",
               encoding="utf-8"
-          ) as f:
+          ).write(html_final)
 
-              for nome, js in arquivos:
-                  f.write(
-                      "\n\n/* ===== " + nome + " ===== */\n\n"
-                  )
-                  f.write(js)
-
-          print("========================================")
-          print("MODULOS DECODIFICADOS")
-          print("========================================")
-          print("Total:", len(arquivos))
-
-          for nome, js in arquivos:
-              print(nome, len(js), "caracteres")
+          print("")
+          print("Jogo modificado criado:")
+          print(caminho_final)
+          print("Tamanho:", len(html_final), "bytes")
           PY
 
-      - name: Encontrar Simulator
+      - name: Criar ZIP
         run: |
-          python3 <<'PY'
-          import re
+          cd dist
 
-          js = open(
-              "/tmp/todos_modulos.js",
-              encoding="utf-8",
-              errors="ignore"
-          ).read()
+          zip -9 -r \
+            ../carga-dutra-99999.zip \
+            index.html
 
-          print("")
-          print("========================================")
-          print("SIMULATOR / getHUD")
-          print("========================================")
+          cd ..
 
-          padroes = [
-              r'class\s+Simulator',
-              r'getHUD\s*\(',
-              r'getHUD\s*=\s*\(',
-              r'getHUD\s*:',
-              r'elapsed\s*:',
-              r'this\.elapsed',
-              r'elapsed\s*=',
-              r'performance\.now\s*\(',
-              r'Date\.now\s*\(',
-              r'create\s*\('
-          ]
+          echo "========================================"
+          echo "ZIP GERADO"
+          echo "========================================"
 
-          encontrados = []
+          ls -lh carga-dutra-99999.zip
 
-          for padrao in padroes:
-              for m in re.finditer(padrao, js, re.I):
-                  encontrados.append(
-                      (m.start(), m.group(0))
-                  )
-
-          encontrados.sort()
-
-          vistos = set()
-          total = 0
-
-          for pos, termo in encontrados:
-
-              inicio = max(0, pos - 1800)
-              fim = min(len(js), pos + 3500)
-
-              trecho = js[inicio:fim]
-
-              baixo = trecho.lower()
-
-              # Só mostrar trechos realmente relacionados
-              if not any(x in baixo for x in [
-                  "simulator",
-                  "gethud",
-                  "elapsed"
-              ]):
-                  continue
-
-              trecho = re.sub(
-                  r'\s+',
-                  ' ',
-                  trecho
-              )
-
-              chave = trecho[:1000]
-
-              if chave in vistos:
-                  continue
-
-              vistos.add(chave)
-
-              print("")
-              print("----------------------------------------")
-              print("TERMO:", termo)
-              print("POSICAO:", pos)
-              print("----------------------------------------")
-              print(trecho[:5000])
-
-              total += 1
-
-              if total >= 15:
-                  break
-
-          print("")
-          print("========================================")
-          print("TRECHOS MOSTRADOS:", total)
-          print("========================================")
-          PY
-
-      - name: Procurar calculo do elapsed
+      - name: Verificar ZIP
         run: |
-          python3 <<'PY'
-          import re
+          unzip -t carga-dutra-99999.zip
 
-          js = open(
-              "/tmp/todos_modulos.js",
-              encoding="utf-8",
-              errors="ignore"
-          ).read()
+          echo ""
+          echo "========================================"
+          echo "BUILD CONCLUIDO"
+          echo "========================================"
+          echo "Arquivo: carga-dutra-99999.zip"
+          echo "O ZIP contém o jogo modificado."
 
-          print("")
-          print("========================================")
-          print("CALCULO DO TEMPO")
-          print("========================================")
-
-          padroes = [
-              r'elapsed\s*[:=]',
-              r'this\.elapsed',
-              r'elapsed\s*\+=',
-              r'elapsed\s*=\s*.*?performance',
-              r'performance\.now\(\).*?elapsed',
-              r'elapsed.*?performance\.now',
-              r'startTime',
-              r'startTimestamp',
-              r'startedAt',
-              r'timerStart',
-              r'gameTime'
-          ]
-
-          total = 0
-          vistos = set()
-
-          for padrao in padroes:
-
-              for m in re.finditer(
-                  padrao,
-                  js,
-                  re.I
-              ):
-
-                  inicio = max(0, m.start() - 1200)
-                  fim = min(len(js), m.end() + 2200)
-
-                  trecho = js[inicio:fim]
-
-                  trecho = re.sub(
-                      r'\s+',
-                      ' ',
-                      trecho
-                  )
-
-                  chave = trecho[:900]
-
-                  if chave in vistos:
-                      continue
-
-                  vistos.add(chave)
-
-                  print("")
-                  print("----------------------------------------")
-                  print("PADRAO:", padrao)
-                  print("POSICAO:", m.start())
-                  print("----------------------------------------")
-                  print(trecho[:3500])
-
-                  total += 1
-
-                  if total >= 20:
-                      break
-
-              if total >= 20:
-                  break
-
-          print("")
-          print("========================================")
-          print("TOTAL:", total)
-          print("========================================")
-          PY
+      - name: Disponibilizar ZIP para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: carga-dutra-99999
+          path: carga-dutra-99999.zip
+          if-no-files-found: error
+          retention-days: 7
