@@ -15,7 +15,6 @@ jobs:
             "https://cargadutra.netlify.app/" \
             -o original.html
 
-          echo "Jogo baixado:"
           wc -c original.html
 
 
@@ -95,6 +94,7 @@ jobs:
           )
 
           def process_module(url, nivel=0):
+
               global alterado
 
               if url in cache:
@@ -110,6 +110,7 @@ jobs:
               )
 
               def replace_import(match):
+
                   old_url = match.group("url")
 
                   new_url = process_module(
@@ -132,6 +133,7 @@ jobs:
               novo = "this.state.elapsed = 99999;"
 
               if antigo in js:
+
                   print(
                       "  " * nivel +
                       ">>> TIMER ENCONTRADO"
@@ -159,6 +161,7 @@ jobs:
           )
 
           def replace_principal(match):
+
               old_url = match.group("url")
 
               new_url = process_module(
@@ -179,7 +182,7 @@ jobs:
 
           if not alterado:
               raise SystemExit(
-                  "ERRO: timer não foi encontrado."
+                  "ERRO: timer não encontrado."
               )
 
           novo_principal = encode_data_url(
@@ -205,7 +208,7 @@ jobs:
 
           print("")
           print("================================")
-          print("JOGO MODIFICADO COM SUCESSO")
+          print("JOGO MODIFICADO")
           print("================================")
           print("Timer interno: 99999")
           print("Módulos:", len(cache))
@@ -250,6 +253,48 @@ jobs:
 
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
+
+
+      - name: Corrigir conflito Kotlin
+        working-directory: android
+        run: |
+          python3 <<'PY'
+          import os
+
+          path = "app/build.gradle"
+
+          text = open(
+              path,
+              encoding="utf-8"
+          ).read()
+
+          # Força todas as dependências Kotlin para uma
+          # única versão compatível.
+          linhas = [
+              "",
+              "configurations.all {",
+              "    resolutionStrategy {",
+              "        force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'",
+              "        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'",
+              "        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'",
+              "    }",
+              "}",
+              ""
+          ]
+
+          bloco = "\n".join(linhas)
+
+          if "force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'" not in text:
+              text += bloco
+
+          open(
+              path,
+              "w",
+              encoding="utf-8"
+          ).write(text)
+
+          print("Conflito Kotlin configurado.")
+          PY
 
 
       - name: Configurar permissao INTERNET
@@ -302,7 +347,11 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk \
             final/carga-dutra-99999.apk
 
-          echo "APK encontrado:"
+          echo ""
+          echo "================================"
+          echo "APK GERADO"
+          echo "================================"
+
           ls -lh final/carga-dutra-99999.apk
 
 
