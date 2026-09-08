@@ -1,4 +1,4 @@
-name: Carga Dutra - APK 3D 99999
+name: Carga Dutra - APK 99999
 
 on:
   workflow_dispatch:
@@ -8,219 +8,161 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Baixar jogo original
+      # ==========================================
+      # 1. BAIXAR O JOGO ORIGINAL
+      # ==========================================
+      - name: Baixar jogo
         run: |
-          set -e
+          mkdir -p web
+          curl -L "https://cargadutra.netlify.app/" -o web/index.html
 
-          curl -L --fail --max-time 120 \
-            "https://cargadutra.netlify.app/" \
-            -o original.html
+          echo "HTML original:"
+          wc -c web/index.html
 
-          wc -c original.html
-
-
-      - name: Configurar Node.js
-        uses: actions/setup-node@v4
+      # ==========================================
+      # 2. INSTALAR PYTHON
+      # ==========================================
+      - name: Configurar Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 20
+          python-version: "3.x"
 
-
-      - name: Modificar timer
+      # ==========================================
+      # 3. MODIFICAR O JOGO
+      # ==========================================
+      - name: Modificar timer do jogo
         run: |
-          set -e
-
-          python3 <<'PY'
+          cat > /tmp/modificar.py <<'PY'
           import re
           import base64
-          import urllib.parse
-          import os
+          from urllib.parse import unquote
 
-          html = open(
-              "original.html",
-              "r",
-              encoding="utf-8",
-              errors="ignore"
-          ).read()
+          INPUT = "web/index.html"
 
-          os.makedirs("web", exist_ok=True)
+          with open(INPUT, "r", encoding="utf-8") as f:
+              html = f.read()
+
+          print("HTML original:", len(html), "bytes")
+
+          processados = set()
+          total = 0
+          timer_encontrado = False
 
           def decode_data_url(url):
-              header, data = url.split(",", 1)
-              data = urllib.parse.unquote(data)
+              if not url.startswith("data:"):
+                  return None
 
-              if ";base64" in header.lower():
-                  return base64.b64decode(data).decode(
-                      "utf-8",
-                      errors="ignore"
+              try:
+                  header, data = url.split(",", 1)
+
+                  if ";base64" in header.lower():
+                      return base64.b64decode(data).decode("utf-8")
+                  else:
+                      return unquote(data)
+
+              except Exception:
+                  return None
+
+          def encode_data_url(original_url, text):
+              try:
+                  header, _ = original_url.split(",", 1)
+
+                  if ";base64" in header.lower():
+                      encoded = base64.b64encode(
+                          text.encode("utf-8")
+                      ).decode("ascii")
+                      return header + "," + encoded
+                  else:
+                      from urllib.parse import quote
+                      return header + "," + quote(text, safe="")
+
+              except Exception:
+                  return original_url
+
+          def modificar_modulo(text, nivel=0):
+              global total, timer_encontrado
+
+              indent = "  " * nivel
+
+              # ------------------------------------------
+              # TIMER INTERNO
+              # ------------------------------------------
+              padrao_timer = r'this\.state\.elapsed\s*\+=\s*dt\s*;'
+
+              if re.search(padrao_timer, text):
+                  print(indent + ">>> TIMER ENCONTRADO")
+
+                  text_novo = re.sub(
+                      padrao_timer,
+                      "this.state.elapsed = 99999;",
+                      text
                   )
 
-              return data
+                  if text_novo != text:
+                      text = text_novo
+                      timer_encontrado = True
+                      print(indent + ">>> TIMER INTERNO = 99999")
 
-          def encode_data_url(js):
-              encoded = base64.b64encode(
-                  js.encode("utf-8")
-              ).decode("ascii")
+              # ------------------------------------------
+              # PROCESSAR DATA URLs DENTRO DO MÓDULO
+              # ------------------------------------------
+              pattern = r'(?P<quote>["\'])(?P<url>data:[^"\']+)(?P=quote)'
 
-              return (
-                  "data:text/javascript;charset=utf-8;base64,"
-                  + encoded
-              )
+              def substituir(match):
+                  nonlocal text
+                  global total
 
-          scripts = re.findall(
-              r'<script[^>]+src=["\']([^"\']+)["\']',
-              html,
-              re.I
-          )
+                  url = match.group("url")
 
-          data_scripts = [
-              x for x in scripts
-              if x.lower().startswith(
-                  "data:text/javascript"
-              )
-          ]
+                  if url in processados:
+                      return match.group(0)
 
-          if not data_scripts:
-              raise SystemExit(
-                  "ERRO: script principal não encontrado."
-              )
+                  decoded = decode_data_url(url)
 
-          principal_url = data_scripts[0]
+                  if decoded is None:
+                      return match.group(0)
+
+                  processados.add(url)
+                  total += 1
+
+                  print(indent + "Módulo:", len(decoded), "bytes")
+
+                  novo = modificar_modulo(decoded, nivel + 1)
+
+                  return match.group("quote") + encode_data_url(url, novo) + match.group("quote")
+
+              text = re.sub(pattern, substituir, text)
+
+              return text
 
           print("Script principal encontrado.")
 
-          cache = {}
-          timer_alterado = False
+          resultado = modificar_modulo(html)
 
-          pattern = re.compile(
-              r'(?P<prefix>(?:from|import)\s*[\'"])'
-              r'(?P<url>data:text/javascript[^\'"]+)'
-              r'(?P<suffix>[\'"])',
-              re.I
-          )
+          with open(INPUT, "w", encoding="utf-8") as f:
+              f.write(resultado)
 
-          def process_module(url, nivel=0):
+          print()
+          print("=" * 42)
+          print("JOGO MODIFICADO COM SUCESSO")
+          print("=" * 42)
+          print("Timer interno:", "99999" if timer_encontrado else "NÃO ENCONTRADO")
+          print("Módulos processados:", total)
+          print("HTML final:", len(resultado), "bytes")
+          print("Arquivo:", INPUT)
 
-              global timer_alterado
+          if not timer_encontrado:
+              raise SystemExit("ERRO: não foi possível encontrar o timer.")
 
-              if url in cache:
-                  return cache[url]
-
-              js = decode_data_url(url)
-
-              print(
-                  "  " * nivel +
-                  "Módulo:",
-                  len(js),
-                  "bytes"
-              )
-
-              def replace_import(match):
-
-                  old_url = match.group("url")
-
-                  new_url = process_module(
-                      old_url,
-                      nivel + 1
-                  )
-
-                  return (
-                      match.group("prefix")
-                      + new_url
-                      + match.group("suffix")
-                  )
-
-              js = pattern.sub(
-                  replace_import,
-                  js
-              )
-
-              antigo = "this.state.elapsed += dt;"
-              novo = "this.state.elapsed = 99999;"
-
-              if antigo in js:
-
-                  print(
-                      "  " * nivel +
-                      ">>> TIMER ENCONTRADO"
-                  )
-
-                  js = js.replace(
-                      antigo,
-                      novo,
-                      1
-                  )
-
-                  timer_alterado = True
-
-                  print(
-                      "  " * nivel +
-                      ">>> TIMER INTERNO = 99999"
-                  )
-
-              cache[url] = encode_data_url(js)
-
-              return cache[url]
-
-          principal_js = decode_data_url(
-              principal_url
-          )
-
-          def replace_principal(match):
-
-              old_url = match.group("url")
-
-              new_url = process_module(
-                  old_url,
-                  1
-              )
-
-              return (
-                  match.group("prefix")
-                  + new_url
-                  + match.group("suffix")
-              )
-
-          principal_js = pattern.sub(
-              replace_principal,
-              principal_js
-          )
-
-          if not timer_alterado:
-              raise SystemExit(
-                  "ERRO: timer não encontrado."
-              )
-
-          novo_principal = encode_data_url(
-              principal_js
-          )
-
-          html_final = html.replace(
-              principal_url,
-              novo_principal,
-              1
-          )
-
-          open(
-              "web/index.html",
-              "w",
-              encoding="utf-8"
-          ).write(html_final)
-
-          print("")
-          print("================================")
-          print("JOGO MODIFICADO")
-          print("================================")
-          print("Timer interno: 99999")
-          print("Módulos:", len(cache))
-          print("HTML:", len(html_final), "bytes")
           PY
 
+          python /tmp/modificar.py
 
-      - name: Instalar Capacitor
+      # ==========================================
+      # 4. CRIAR PROJETO NODE
+      # ==========================================
+      - name: Criar projeto
         run: |
-          set -e
-
           npm init -y
 
           npm install \
@@ -228,100 +170,129 @@ jobs:
             @capacitor/cli \
             @capacitor/android
 
-
-      - name: Inicializar Capacitor
+      # ==========================================
+      # 5. CONFIGURAR CAPACITOR
+      # ==========================================
+      - name: Configurar Capacitor
         run: |
-          set -e
+          npx cap init "Carga Dutra" "com.cargadutra.game" --web-dir web
 
-          npx cap init \
-            "Carga Dutra" \
-            "com.cargadutra.game" \
-            --web-dir web
-
-
+      # ==========================================
+      # 6. CRIAR PROJETO ANDROID
+      # ==========================================
       - name: Adicionar Android
         run: |
-          set -e
-
           npx cap add android
 
-
-      - name: Configurar WebView 3D
+      # ==========================================
+      # 7. CORRIGIR ANDROIDMANIFEST
+      # ==========================================
+      - name: Configurar AndroidManifest
         run: |
-          set -e
+          python - <<'PY'
+          import re
 
-          python3 <<'PY'
-          import os
+          path = "android/app/src/main/AndroidManifest.xml"
 
-          manifest = (
-              "android/app/src/main/AndroidManifest.xml"
+          with open(path, "r", encoding="utf-8") as f:
+              text = f.read()
+
+          # ------------------------------------------
+          # ENCONTRAR A TAG <manifest ...>
+          # ------------------------------------------
+          match = re.search(
+              r'<manifest\b[^>]*>',
+              text,
+              flags=re.IGNORECASE
           )
 
-          text = open(
-              manifest,
-              encoding="utf-8"
-          ).read()
+          if not match:
+              raise SystemExit("Tag <manifest> não encontrada.")
 
-          permissions = [
-              '<uses-permission android:name="android.permission.INTERNET" />',
-              '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />'
-          ]
+          manifest_tag = match.group(0)
 
-          for permission in permissions:
+          permissions = """
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+          """
 
-              if permission not in text:
-
-                  text = text.replace(
-                      "<manifest",
-                      "<manifest\n    " + permission,
-                      1
-                  )
-
-          if "android:hardwareAccelerated" not in text:
-
-              text = text.replace(
-                  "<application",
-                  '<application android:hardwareAccelerated="true"',
-                  1
+          if "android.permission.INTERNET" not in text:
+              text = (
+                  text[:match.end()]
+                  + permissions
+                  + text[match.end():]
               )
 
-          open(
-              manifest,
-              "w",
-              encoding="utf-8"
-          ).write(text)
-
-          print("Hardware acceleration configurada.")
-
-          activity = (
-              "android/app/src/main/java/"
-              "com/cargadutra/game/MainActivity.java"
+          # ------------------------------------------
+          # CONFIGURAR <application>
+          # ------------------------------------------
+          app_match = re.search(
+              r'<application\b[^>]*>',
+              text,
+              flags=re.IGNORECASE
           )
 
-          if not os.path.exists(activity):
-              raise SystemExit(
-                  "MainActivity.java não encontrado."
+          if not app_match:
+              raise SystemExit("Tag <application> não encontrada.")
+
+          app_tag = app_match.group(0)
+
+          # Hardware acceleration
+          if "android:hardwareAccelerated=" not in app_tag:
+              novo_app_tag = app_tag[:-1] + ' android:hardwareAccelerated="true">'
+              text = (
+                  text[:app_match.start()]
+                  + novo_app_tag
+                  + text[app_match.end():]
               )
 
-          source = open(
-              activity,
-              encoding="utf-8"
-          ).read()
+          # Permitir conteúdo HTTP caso algum recurso do jogo precise
+          app_match = re.search(
+              r'<application\b[^>]*>',
+              text,
+              flags=re.IGNORECASE
+          )
 
-          if "android.webkit.WebSettings" not in source:
+          app_tag = app_match.group(0)
 
-              source = source.replace(
-                  "package com.cargadutra.game;",
-                  """package com.cargadutra.game;
+          if "android:usesCleartextTraffic=" not in app_tag:
+              novo_app_tag = (
+                  app_tag[:-1]
+                  + ' android:usesCleartextTraffic="true">'
+              )
+
+              text = (
+                  text[:app_match.start()]
+                  + novo_app_tag
+                  + text[app_match.end():]
+              )
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+
+          print("AndroidManifest configurado corretamente.")
+          print()
+          print(text)
+          PY
+
+      # ==========================================
+      # 8. CRIAR MAINACTIVITY ESTÁVEL PARA WEBVIEW
+      # ==========================================
+      - name: Configurar MainActivity
+        run: |
+          mkdir -p android/app/src/main/java/com/cargadutra/game
+
+          cat > android/app/src/main/java/com/cargadutra/game/MainActivity.java <<'JAVA'
+          package com.cargadutra.game;
 
           import android.os.Bundle;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
-          """,
-                  1
-              )
 
-          code = """
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
@@ -330,9 +301,7 @@ jobs:
                   WebView webView = getBridge().getWebView();
 
                   if (webView != null) {
-
-                      WebSettings settings =
-                          webView.getSettings();
+                      WebSettings settings = webView.getSettings();
 
                       settings.setJavaScriptEnabled(true);
                       settings.setDomStorageEnabled(true);
@@ -341,11 +310,13 @@ jobs:
                       settings.setAllowFileAccess(true);
                       settings.setAllowContentAccess(true);
 
-                      settings.setJavaScriptCanOpenWindowsAutomatically(true);
-
                       settings.setMediaPlaybackRequiresUserGesture(false);
 
-                      settings.setLoadsImagesAutomatically(true);
+                      if (android.os.Build.VERSION.SDK_INT >= 21) {
+                          settings.setMixedContentMode(
+                              WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                          );
+                      }
 
                       webView.setLayerType(
                           WebView.LAYER_TYPE_HARDWARE,
@@ -353,119 +324,87 @@ jobs:
                       );
                   }
               }
-          """
+          }
+          JAVA
 
-          if "setJavaScriptEnabled(true)" not in source:
+          echo "MainActivity configurada."
 
-              pos = source.rfind("}")
-
-              if pos == -1:
-                  raise SystemExit(
-                      "Não foi possível modificar MainActivity."
-                  )
-
-              source = (
-                  source[:pos]
-                  + code
-                  + "\n"
-                  + source[pos:]
-              )
-
-          open(
-              activity,
-              "w",
-              encoding="utf-8"
-          ).write(source)
-
-          print("WebView configurado.")
-          PY
-
-
-      - name: Copiar jogo para Android
+      # ==========================================
+      # 9. COPIAR JOGO PARA ANDROID
+      # ==========================================
+      - name: Copiar jogo
         run: |
-          set -e
-
           npx cap copy android
 
+      # ==========================================
+      # 10. FORÇAR KOTLIN COMPATÍVEL
+      # ==========================================
+      - name: Corrigir dependências Kotlin
+        run: |
+          cat >> android/build.gradle <<'GRADLE'
 
+          allprojects {
+              configurations.all {
+                  resolutionStrategy {
+                      force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+                      force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+                  }
+              }
+          }
+          GRADLE
+
+      # ==========================================
+      # 11. JAVA 21
+      # ==========================================
       - name: Configurar Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: "21"
 
-
+      # ==========================================
+      # 12. ANDROID SDK
+      # ==========================================
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
 
+      # ==========================================
+      # 13. DAR PERMISSÃO AO GRADLE
+      # ==========================================
+      - name: Permissão Gradle
+        run: |
+          chmod +x android/gradlew
 
-      - name: Corrigir Kotlin
+      # ==========================================
+      # 14. LIMPAR PROJETO
+      # ==========================================
+      - name: Limpar Android
         working-directory: android
         run: |
-          set -e
+          ./gradlew clean
 
-          python3 <<'PY'
-
-          path = "app/build.gradle"
-
-          text = open(
-              path,
-              encoding="utf-8"
-          ).read()
-
-          bloco = """
-
-          configurations.all {
-              resolutionStrategy {
-                  force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
-                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
-                  force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
-              }
-          }
-          """
-
-          if "kotlin-stdlib:1.8.22" not in text:
-              text += bloco
-
-          open(
-              path,
-              "w",
-              encoding="utf-8"
-          ).write(text)
-
-          print("Kotlin configurado.")
-          PY
-
-
-      - name: Compilar APK
+      # ==========================================
+      # 15. GERAR APK
+      # ==========================================
+      - name: Gerar APK
         working-directory: android
         run: |
-          set -e
+          ./gradlew assembleDebug --stacktrace
 
-          chmod +x gradlew
-
-          ./gradlew assembleDebug \
-            --no-daemon \
-            --stacktrace
-
-
-      - name: Preparar APK
+      # ==========================================
+      # 16. VERIFICAR APK
+      # ==========================================
+      - name: Verificar APK
         run: |
-          set -e
+          find android/app/build/outputs/apk -type f -name "*.apk" -print
 
-          mkdir -p final
-
-          cp \
-            android/app/build/outputs/apk/debug/app-debug.apk \
-            final/carga-dutra-3d-99999.apk
-
-          ls -lh final/carga-dutra-3d-99999.apk
-
-
-      - name: Disponibilizar APK
+      # ==========================================
+      # 17. DISPONIBILIZAR APK
+      # ==========================================
+      - name: Enviar APK
         uses: actions/upload-artifact@v4
         with:
-          name: carga-dutra-3d-99999-apk
-          path: final/carga-dutra-3d-99999.apk
+          name: carga-dutra-99999-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 7
