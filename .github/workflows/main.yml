@@ -1,4 +1,4 @@
-name: Gerar Carga Dutra 99999
+name: Gerar APK Carga Dutra 99999
 
 on:
   workflow_dispatch:
@@ -8,16 +8,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==========================================
+      # 1. BAIXAR JOGO
+      # ==========================================
+
       - name: Baixar jogo original
         run: |
           curl -L --fail --max-time 120 \
             "https://cargadutra.netlify.app/" \
             -o original.html
 
-          echo "HTML baixado:"
+          echo "Jogo baixado:"
           wc -c original.html
 
-      - name: Modificar módulos do jogo
+
+      # ==========================================
+      # 2. INSTALAR NODE
+      # ==========================================
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+
+      # ==========================================
+      # 3. MODIFICAR JOGO
+      # ==========================================
+
+      - name: Modificar timer do jogo
         run: |
           python3 <<'PY'
           import re
@@ -32,7 +52,7 @@ jobs:
               errors="ignore"
           ).read()
 
-          os.makedirs("dist", exist_ok=True)
+          os.makedirs("web", exist_ok=True)
 
           def decode_data_url(url):
               header, data = url.split(",", 1)
@@ -56,7 +76,6 @@ jobs:
                   + encoded
               )
 
-          # Encontrar script principal
           scripts = re.findall(
               r'<script[^>]+src=["\']([^"\']+)["\']',
               html,
@@ -79,14 +98,18 @@ jobs:
 
           cache = {}
 
-          import_pattern = re.compile(
+          pattern = re.compile(
               r'(?P<prefix>(?:from|import)\s*[\'"])'
               r'(?P<url>data:text/javascript[^\'"]+)'
               r'(?P<suffix>[\'"])',
               re.I
           )
 
+          alterado = False
+
           def process_module(url, nivel=0):
+
+              global alterado
 
               if url in cache:
                   return cache[url]
@@ -100,7 +123,6 @@ jobs:
                   "bytes"
               )
 
-              # Processar imports internos primeiro
               def replace_import(match):
 
                   old_url = match.group("url")
@@ -116,15 +138,12 @@ jobs:
                       + match.group("suffix")
                   )
 
-              js = import_pattern.sub(
+              js = pattern.sub(
                   replace_import,
                   js
               )
 
-              # ========================================
               # TIMER REAL
-              # ========================================
-
               antigo = "this.state.elapsed += dt;"
               novo = "this.state.elapsed = 99999;"
 
@@ -132,7 +151,7 @@ jobs:
 
                   print(
                       "  " * nivel +
-                      ">>> TIMER ENCONTRADO!"
+                      ">>> TIMER ENCONTRADO"
                   )
 
                   js = js.replace(
@@ -141,24 +160,21 @@ jobs:
                       1
                   )
 
+                  alterado = True
+
                   print(
                       "  " * nivel +
-                      ">>> TIMER ALTERADO PARA 99999!"
+                      ">>> TIMER ALTERADO PARA 99999"
                   )
 
               cache[url] = encode_data_url(js)
 
               return cache[url]
 
-          # Decodificar principal
           principal_js = decode_data_url(
               principal_url
           )
 
-          print("")
-          print("Processando módulos...")
-
-          # Reconstruir imports do principal
           def replace_principal(match):
 
               old_url = match.group("url")
@@ -174,128 +190,185 @@ jobs:
                   + match.group("suffix")
               )
 
-          principal_js = import_pattern.sub(
+          principal_js = pattern.sub(
               replace_principal,
               principal_js
           )
 
-          # ========================================
-          # VERIFICAR O PRINCIPAL
-          # ========================================
-
-          print("")
-          print("========================================")
-          print("VERIFICAÇÃO DA ALTERAÇÃO")
-          print("========================================")
-
-          # Procurar o texto antigo no principal
-          if "this.state.elapsed += dt;" in principal_js:
-              print(
-                  "AVISO: incremento antigo ainda aparece no principal."
-              )
-          else:
-              print(
-                  "OK: incremento antigo não está no principal."
-              )
-
-          # Verificar se algum módulo processado contém
-          # a versão modificada.
-          modulo_modificado = False
-
-          for url_codificado, novo_url in cache.items():
-
-              js_teste = decode_data_url(
-                  novo_url
-              )
-
-              if "this.state.elapsed = 99999;" in js_teste:
-                  modulo_modificado = True
-                  print(
-                      "OK: módulo do Simulator contém "
-                      "this.state.elapsed = 99999;"
-                  )
-                  break
-
-          if not modulo_modificado:
+          if not alterado:
               raise SystemExit(
-                  "ERRO: não encontrei a alteração "
-                  "dentro dos módulos reconstruídos."
+                  "ERRO: timer não foi encontrado."
               )
 
-          # ========================================
-          # GERAR PRINCIPAL FINAL
-          # ========================================
-
-          principal_final = encode_data_url(
+          novo_principal = encode_data_url(
               principal_js
           )
 
           html_final = html.replace(
               principal_url,
-              principal_final,
+              novo_principal,
               1
           )
 
           if html_final == html:
               raise SystemExit(
-                  "ERRO: principal não foi inserido no HTML."
+                  "ERRO: HTML não foi modificado."
               )
 
           open(
-              "dist/index.html",
+              "web/index.html",
               "w",
               encoding="utf-8"
           ).write(html_final)
 
           print("")
-          print("========================================")
-          print("SUCESSO")
-          print("========================================")
-          print("Módulos processados:", len(cache))
-          print(
-              "Timer interno configurado para 99999 segundos."
-          )
-          print(
-              "Arquivo criado: dist/index.html"
-          )
-          print(
-              "Tamanho:",
-              len(html_final),
-              "bytes"
-          )
+          print("================================")
+          print("JOGO MODIFICADO COM SUCESSO")
+          print("================================")
+          print("Timer interno: 99999")
+          print("Módulos:", len(cache))
+          print("HTML:", len(html_final), "bytes")
           PY
 
-      - name: Criar ZIP
+
+      # ==========================================
+      # 4. INSTALAR CAPACITOR
+      # ==========================================
+
+      - name: Criar projeto Capacitor
         run: |
-          cd dist
+          npm init -y
 
-          zip -9 ../carga-dutra-99999.zip index.html
+          npm install \
+            @capacitor/core \
+            @capacitor/cli \
+            @capacitor/android
 
-          cd ..
+          npx cap init \
+            "Carga Dutra" \
+            "com.cargadutra.game" \
+            --web-dir web
 
-          echo ""
-          echo "========================================"
-          echo "ZIP GERADO"
-          echo "========================================"
 
-          ls -lh carga-dutra-99999.zip
+      # ==========================================
+      # 5. CRIAR ANDROID
+      # ==========================================
 
-      - name: Testar ZIP
+      - name: Adicionar Android
         run: |
-          echo "Testando arquivo..."
+          npx cap add android
 
-          unzip -t carga-dutra-99999.zip
 
-          echo ""
-          echo "========================================"
-          echo "TUDO CERTO"
-          echo "========================================"
-          echo "Arquivo: carga-dutra-99999.zip"
+      # ==========================================
+      # 6. COPIAR JOGO PARA ANDROID
+      # ==========================================
 
-      - name: Disponibilizar ZIP
+      - name: Copiar jogo modificado
+        run: |
+          npx cap copy android
+
+
+      # ==========================================
+      # 7. CONFIGURAR INTERNET
+      # ==========================================
+
+      - name: Configurar permissões Android
+        run: |
+          python3 <<'PY'
+          path = "android/app/src/main/AndroidManifest.xml"
+
+          text = open(
+              path,
+              encoding="utf-8"
+          ).read()
+
+          permission = (
+              '<uses-permission '
+              'android:name="android.permission.INTERNET" />'
+          )
+
+          if permission not in text:
+              text = text.replace(
+                  '<manifest',
+                  '<manifest'
+                  + '\n    '
+                  + permission,
+                  1
+              )
+
+          open(
+              path,
+              "w",
+              encoding="utf-8"
+          ).write(text)
+
+          print("Permissão INTERNET configurada.")
+          PY
+
+
+      # ==========================================
+      # 8. CONFIGURAR JAVA
+      # ==========================================
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+
+      # ==========================================
+      # 9. CONFIGURAR ANDROID SDK
+      # ==========================================
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+
+      # ==========================================
+      # 10. COMPILAR APK
+      # ==========================================
+
+      - name: Compilar APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+
+      # ==========================================
+      # 11. LOCALIZAR APK
+      # ==========================================
+
+      - name: Localizar APK
+        run: |
+          echo "APKs encontrados:"
+
+          find android \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          mkdir -p final
+
+          cp \
+            android/app/build/outputs/apk/debug/app-debug.apk \
+            final/carga-dutra-99999.apk
+
+          ls -lh final/carga-dutra-99999.apk
+
+
+      # ==========================================
+      # 12. DISPONIBILIZAR APK
+      # ==========================================
+
+      - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
-          name: carga-dutra-99999
-          path: carga-dutra-99999.zip
+          name: carga-dutra-99999-apk
+          path: final/carga-dutra-99999.apk
           if-no-files-found: error
           retention-days: 7
