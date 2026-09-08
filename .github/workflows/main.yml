@@ -1,4 +1,4 @@
-name: Encontrar contador
+name: Identificar tecnologia do jogo
 
 on:
   workflow_dispatch:
@@ -8,38 +8,149 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar projeto
-        uses: actions/checkout@v5
-
       - name: Instalar ferramentas
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq curl
 
-      - name: Baixar pagina do jogo
+      - name: Baixar pagina principal
         shell: bash
         run: |
-          mkdir -p /tmp/jogo
+          curl -L --max-time 30 -s \
+            "https://cargadutra.netlify.app/" \
+            -o /tmp/index.html
 
-          curl -L --max-time 60 \
-            -s "https://cargadutra.netlify.app/" \
-            -o /tmp/jogo/index.html
-
-          echo "Pagina baixada:"
-          wc -c /tmp/jogo/index.html
-
-      - name: Encontrar scripts
+      - name: Identificar tecnologia
         shell: bash
         run: |
-          echo "========================================"
-          echo "SCRIPTS ENCONTRADOS"
-          echo "========================================"
-
           python3 <<'PY'
           import re
-          from urllib.parse import urljoin
 
-          html = open("/tmp/jogo/index.html", encoding="utf-8", errors="ignore").read()
+          html = open(
+              "/tmp/index.html",
+              encoding="utf-8",
+              errors="ignore"
+          ).read()
+
+          texto = html.lower()
+
+          encontrados = []
+
+          tecnologias = {
+              "React": [
+                  "react",
+                  "reactdom",
+                  "__react",
+                  "_reactroot"
+              ],
+
+              "Vite": [
+                  "vite",
+                  "@vite",
+                  "/assets/",
+                  "type=\"module\""
+              ],
+
+              "Unity": [
+                  "unityloader",
+                  "unityframework",
+                  "unityinstance",
+                  "build.loader.js",
+                  "unity",
+              ],
+
+              "Godot": [
+                  "godot",
+                  "engine.start",
+                  "godotengine"
+              ],
+
+              "Phaser": [
+                  "phaser",
+                  "phaser.js",
+                  "phaser.min.js"
+              ],
+
+              "Three.js": [
+                  "three.js",
+                  "three.min.js",
+                  "three.module.js",
+                  "webglrenderer",
+                  "three"
+              ],
+
+              "PixiJS": [
+                  "pixi.js",
+                  "pixi.min.js",
+                  "pixijs"
+              ],
+
+              "Babylon.js": [
+                  "babylon.js",
+                  "babylonjs",
+                  "babylon"
+              ],
+
+              "Angular": [
+                  "ng-version",
+                  "angular",
+                  "ng-app"
+              ],
+
+              "Vue": [
+                  "vue.js",
+                  "vue.min.js",
+                  "__vue__",
+                  "data-v-"
+              ],
+
+              "Svelte": [
+                  "svelte",
+                  "__svelte"
+              ],
+
+              "Next.js": [
+                  "__next",
+                  "_next/static",
+                  "next.js"
+              ],
+
+              "Electron": [
+                  "electron"
+              ]
+          }
+
+          for nome, termos in tecnologias.items():
+              achados = []
+
+              for termo in termos:
+                  if termo.lower() in texto:
+                      achados.append(termo)
+
+              if achados:
+                  encontrados.append(
+                      (nome, sorted(set(achados)))
+                  )
+
+          print("")
+          print("========================================")
+          print("RESULTADO DA IDENTIFICACAO")
+          print("========================================")
+          print("")
+
+          if encontrados:
+              for nome, achados in encontrados:
+                  print(f"[+] {nome}")
+                  print("    Indicadores:", ", ".join(achados))
+          else:
+              print("[?] Nenhuma tecnologia identificada diretamente")
+              print("    O jogo provavelmente carrega o motor")
+              print("    dinamicamente ou usa um bundle externo.")
+
+          print("")
+          print("========================================")
+          print("RECURSOS ENCONTRADOS")
+          print("========================================")
 
           scripts = re.findall(
               r'<script[^>]+src=["\']([^"\']+)["\']',
@@ -47,77 +158,33 @@ jobs:
               re.I
           )
 
-          print("Quantidade de scripts:", len(scripts))
+          links = re.findall(
+              r'<link[^>]+href=["\']([^"\']+)["\']',
+              html,
+              re.I
+          )
 
-          with open("/tmp/jogo/scripts.txt", "w") as f:
-              for src in scripts:
-                  url = urljoin("https://cargadutra.netlify.app/", src)
-                  print(url)
-                  f.write(url + "\n")
+          print("")
+          print("Scripts:", len(scripts))
+
+          for src in scripts[:30]:
+              print(" -", src)
+
+          print("")
+          print("Links:", len(links))
+
+          for href in links[:30]:
+              print(" -", href)
+
+          print("")
+          print("========================================")
+          print("FIM DO DIAGNOSTICO")
+          print("========================================")
           PY
 
-      - name: Baixar JavaScript
-        shell: bash
-        run: |
-          mkdir -p /tmp/jogo/js
-
-          contador=0
-
-          while IFS= read -r url; do
-            contador=$((contador + 1))
-
-            echo "Baixando script $contador..."
-
-            curl -L --max-time 60 -s "$url" \
-              -o "/tmp/jogo/js/script_$contador.js" \
-              || true
-          done < /tmp/jogo/scripts.txt
-
-          echo ""
-          echo "Scripts baixados:"
-          find /tmp/jogo/js -type f -printf '%f %s bytes\n'
-
-      - name: Procurar contador
-        shell: bash
+      - name: Concluido
         run: |
           echo ""
-          echo "========================================"
-          echo "POSSIVEIS TRECHOS DO CONTADOR"
-          echo "========================================"
-
-          grep -RniE \
-            'elapsed|targetTime|formatTime|timeLeft|timeRemaining|remainingTime|countdown|countDown|gameTimer|timer|setInterval|setTimeout|Date\.now|performance\.now|seconds|duration' \
-            /tmp/jogo/js \
-            2>/dev/null \
-            | head -120 \
-            || true
-
-      - name: Procurar valores de tempo
-        shell: bash
-        run: |
-          echo ""
-          echo "========================================"
-          echo "POSSIVEIS VALORES DO CONTADOR"
-          echo "========================================"
-
-          grep -RniE \
-            '99999|999999|60000|30000|10000|5000|3000|1000|600|300|120|60' \
-            /tmp/jogo/js \
-            2>/dev/null \
-            | head -80 \
-            || true
-
-      - name: Resumo
-        run: |
-          echo ""
-          echo "========================================"
-          echo "RESUMO"
-          echo "========================================"
-
-          echo "Arquivos JS encontrados:"
-          find /tmp/jogo/js -type f | wc -l
-
-          echo ""
-          echo "Analise concluida."
+          echo "Diagnostico concluido com sucesso."
           echo "Nenhum arquivo do jogo foi alterado."
           echo "Nenhum APK foi gerado."
