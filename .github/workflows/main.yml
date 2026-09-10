@@ -1,4 +1,4 @@
-name: Carga Dutra V3 - APK WebGL
+name: Carga Dutra V4 - Mobile
 
 on:
   workflow_dispatch:
@@ -19,16 +19,16 @@ jobs:
           curl -L \
             --retry 5 \
             --retry-delay 2 \
-            -A "Mozilla/5.0" \
+            -A "Mozilla/5.0 (Linux; Android 14)" \
             "https://cargadutra.netlify.app/" \
             -o web/index.html
 
-          echo "Tamanho do HTML:"
+          echo "HTML original:"
           wc -c web/index.html
 
 
       # ==================================================
-      # 2 - CONFIGURAR PYTHON
+      # 2 - PYTHON
       # ==================================================
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -37,10 +37,9 @@ jobs:
 
 
       # ==================================================
-      # 3 - RECONSTRUIR OS MÓDULOS DATA:
-      #    E ALTERAR O TIMER
+      # 3 - ALTERAR TIMER DENTRO DOS MÓDULOS
       # ==================================================
-      - name: Modificar jogo
+      - name: Alterar timer para 99999
         run: |
 
           cat > /tmp/modificar.py <<'PY'
@@ -57,11 +56,8 @@ jobs:
           total = 0
           timer_ok = False
 
-          print("HTML original:", len(html), "bytes")
-
 
           def decode_data_url(url):
-
               try:
                   header, data = url.split(",", 1)
 
@@ -75,35 +71,34 @@ jobs:
 
 
           def encode_data_url(url, texto):
-
               try:
                   header, _ = url.split(",", 1)
 
                   if ";base64" in header.lower():
-
                       dados = base64.b64encode(
                           texto.encode("utf-8")
                       ).decode("ascii")
 
                       return header + "," + dados
 
-                  return header + "," + quote(texto, safe="")
+                  return header + "," + quote(
+                      texto,
+                      safe=""
+                  )
 
               except Exception:
                   return url
 
 
           def processar(texto, nivel=0):
-
               global total
               global timer_ok
 
               indent = "  " * nivel
 
-              # ==========================================
-              # TIMER
-              # ==========================================
-
+              # ------------------------------------------
+              # TIMER DO SIMULATOR
+              # ------------------------------------------
               padrao = r'this\.state\.elapsed\s*\+=\s*dt\s*;'
 
               if re.search(padrao, texto):
@@ -123,14 +118,13 @@ jobs:
 
                       print(
                           indent +
-                          ">>> TIMER INTERNO ALTERADO PARA 99999"
+                          ">>> TIMER INTERNO = 99999"
                       )
 
 
-              # ==========================================
-              # ENCONTRAR DATA: URL
-              # ==========================================
-
+              # ------------------------------------------
+              # MÓDULOS DATA:
+              # ------------------------------------------
               padrao_data = (
                   r'(?P<q>["\'])'
                   r'(?P<url>data:[^"\']+)'
@@ -153,7 +147,6 @@ jobs:
                       return match.group(0)
 
                   processados.add(url)
-
                   total += 1
 
                   print(
@@ -163,33 +156,27 @@ jobs:
                       "bytes"
                   )
 
-                  modificado = processar(
+                  novo = processar(
                       decodificado,
                       nivel + 1
                   )
 
-                  novo_url = encode_data_url(
-                      url,
-                      modificado
-                  )
-
                   return (
                       match.group("q") +
-                      novo_url +
+                      encode_data_url(url, novo) +
                       match.group("q")
                   )
 
 
-              texto = re.sub(
+              return re.sub(
                   padrao_data,
                   substituir,
                   texto
               )
 
-              return texto
-
 
           resultado = processar(html)
+
 
           with open(arquivo, "w", encoding="utf-8") as f:
               f.write(resultado)
@@ -197,19 +184,19 @@ jobs:
 
           print()
           print("=" * 50)
-          print("RESULTADO")
+          print("RESULTADO DA MODIFICAÇÃO")
           print("=" * 50)
           print("Timer encontrado:", timer_ok)
-          print("Módulos processados:", total)
+          print("Módulos:", total)
           print("HTML final:", len(resultado), "bytes")
 
 
           if not timer_ok:
               raise SystemExit(
-                  "ERRO: TIMER NÃO FOI ENCONTRADO"
+                  "ERRO: TIMER NÃO ENCONTRADO"
               )
 
-          print("Jogo preparado com sucesso.")
+          print("Timer configurado para 99999.")
 
           PY
 
@@ -230,7 +217,7 @@ jobs:
 
 
       # ==================================================
-      # 5 - CONFIGURAR CAPACITOR
+      # 5 - CAPACITOR
       # ==================================================
       - name: Inicializar Capacitor
         run: |
@@ -241,15 +228,15 @@ jobs:
 
 
       # ==================================================
-      # 6 - CRIAR ANDROID
+      # 6 - ANDROID
       # ==================================================
-      - name: Criar projeto Android
+      - name: Adicionar Android
         run: |
           npx cap add android
 
 
       # ==================================================
-      # 7 - CONFIGURAR MANIFEST DE FORMA SEGURA
+      # 7 - MANIFEST
       # ==================================================
       - name: Configurar AndroidManifest
         run: |
@@ -267,18 +254,17 @@ jobs:
 
 
           # ----------------------------------------------
-          # PERMISSÕES
+          # MANIFEST
           # ----------------------------------------------
-
-          match = re.search(
+          manifest = re.search(
               r'<manifest\b[^>]*>',
               texto,
               re.IGNORECASE
           )
 
-          if not match:
+          if not manifest:
               raise SystemExit(
-                  "ERRO: <manifest> não encontrado"
+                  "ERRO: manifest não encontrado"
               )
 
 
@@ -300,16 +286,15 @@ jobs:
           if "android.permission.INTERNET" not in texto:
 
               texto = (
-                  texto[:match.end()]
+                  texto[:manifest.end()]
                   + permissoes
-                  + texto[match.end():]
+                  + texto[manifest.end():]
               )
 
 
           # ----------------------------------------------
           # APPLICATION
           # ----------------------------------------------
-
           app = re.search(
               r'<application\b[^>]*>',
               texto,
@@ -318,7 +303,7 @@ jobs:
 
           if not app:
               raise SystemExit(
-                  "ERRO: <application> não encontrado"
+                  "ERRO: application não encontrado"
               )
 
 
@@ -327,19 +312,18 @@ jobs:
 
           if "android:hardwareAccelerated=" not in tag:
 
-              nova_tag = (
+              nova = (
                   tag[:-1] +
                   ' android:hardwareAccelerated="true">'
               )
 
               texto = (
-                  texto[:app.start()] +
-                  nova_tag +
-                  texto[app.end():]
+                  texto[:app.start()]
+                  + nova
+                  + texto[app.end():]
               )
 
 
-          # Permitir recursos HTTP caso existam
           app = re.search(
               r'<application\b[^>]*>',
               texto,
@@ -351,15 +335,15 @@ jobs:
 
           if "android:usesCleartextTraffic=" not in tag:
 
-              nova_tag = (
+              nova = (
                   tag[:-1] +
                   ' android:usesCleartextTraffic="true">'
               )
 
               texto = (
-                  texto[:app.start()] +
-                  nova_tag +
-                  texto[app.end():]
+                  texto[:app.start()]
+                  + nova
+                  + texto[app.end():]
               )
 
 
@@ -367,15 +351,15 @@ jobs:
               f.write(texto)
 
 
-          print("AndroidManifest OK")
+          print("AndroidManifest configurado.")
 
           PY
 
 
       # ==================================================
-      # 8 - MAIN ACTIVITY ESPECIAL PARA WEBGL
+      # 8 - MAINACTIVITY MOBILE
       # ==================================================
-      - name: Configurar WebView WebGL
+      - name: Configurar WebView para celular
         run: |
 
           mkdir -p \
@@ -387,6 +371,8 @@ jobs:
           package com.cargadutra.game;
 
           import android.os.Bundle;
+          import android.view.Window;
+          import android.view.WindowManager;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
 
@@ -400,6 +386,16 @@ jobs:
 
                   super.onCreate(savedInstanceState);
 
+
+                  // Tela aproveitando todo o espaço disponível
+                  Window window = getWindow();
+
+                  window.setFlags(
+                      WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                      WindowManager.LayoutParams.FLAG_FULLSCREEN
+                  );
+
+
                   WebView webView =
                       getBridge().getWebView();
 
@@ -410,41 +406,68 @@ jobs:
                           webView.getSettings();
 
 
-                      // JavaScript
+                      // ==================================
+                      // JAVASCRIPT
+                      // ==================================
                       settings.setJavaScriptEnabled(true);
 
 
-                      // Armazenamento
+                      // ==================================
+                      // STORAGE
+                      // ==================================
                       settings.setDomStorageEnabled(true);
                       settings.setDatabaseEnabled(true);
 
 
-                      // Conteúdo local
+                      // ==================================
+                      // ARQUIVOS / DATA URL
+                      // ==================================
                       settings.setAllowFileAccess(true);
                       settings.setAllowContentAccess(true);
 
 
-                      // Mídia
-                      settings.setMediaPlaybackRequiresUserGesture(false);
+                      // ==================================
+                      // WEBGL / HARDWARE
+                      // ==================================
+                      webView.setLayerType(
+                          WebView.LAYER_TYPE_HARDWARE,
+                          null
+                      );
 
 
-                      // Zoom
+                      // ==================================
+                      // VÍDEO / ÁUDIO
+                      // ==================================
+                      settings.setMediaPlaybackRequiresUserGesture(
+                          false
+                      );
+
+
+                      // ==================================
+                      // NÃO USAR ZOOM DE DESKTOP
+                      // ==================================
                       settings.setBuiltInZoomControls(false);
                       settings.setDisplayZoomControls(false);
 
 
-                      // Viewport
+                      // ==================================
+                      // ESCALA NATIVA DO CELULAR
+                      // ==================================
                       settings.setUseWideViewPort(false);
                       settings.setLoadWithOverviewMode(false);
 
 
-                      // Cache
+                      // ==================================
+                      // CACHE
+                      // ==================================
                       settings.setCacheMode(
                           WebSettings.LOAD_DEFAULT
                       );
 
 
-                      // Mixed content
+                      // ==================================
+                      // MIXED CONTENT
+                      // ==================================
                       if (
                           android.os.Build.VERSION.SDK_INT >= 21
                       ) {
@@ -456,41 +479,39 @@ jobs:
                       }
 
 
-                      // HARDWARE / WEBGL
-                      webView.setLayerType(
-                          WebView.LAYER_TYPE_HARDWARE,
-                          null
-                      );
+                      // ==================================
+                      // IMAGENS
+                      // ==================================
+                      settings.setLoadsImagesAutomatically(true);
 
 
-                      // Permitir JavaScript abrir novas janelas
+                      // ==================================
+                      // JAVASCRIPT PODE ABRIR JANELAS
+                      // ==================================
                       settings.setJavaScriptCanOpenWindowsAutomatically(
                           true
                       );
 
 
-                      // Melhor compatibilidade com recursos
-                      settings.setLoadsImagesAutomatically(true);
+                      // ==================================
+                      // USER AGENT MOBILE
+                      // ==================================
+                      settings.setUserAgentString(
+                          "Mozilla/5.0 " +
+                          "(Linux; Android 14; Mobile) " +
+                          "AppleWebKit/537.36 " +
+                          "(KHTML, like Gecko) " +
+                          "Chrome/140.0.0.0 " +
+                          "Mobile Safari/537.36"
+                      );
 
 
-                      // User Agent semelhante a navegador Android
-                      String userAgent =
-                          settings.getUserAgentString();
-
-                      if (
-                          userAgent == null ||
-                          userAgent.length() == 0
-                      ) {
-
-                          settings.setUserAgentString(
-                              "Mozilla/5.0 " +
-                              "(Linux; Android 14) " +
-                              "AppleWebKit/537.36 " +
-                              "(KHTML, like Gecko) " +
-                              "Chrome/140.0.0.0 " +
-                              "Mobile Safari/537.36"
-                          );
-                      }
+                      // ==================================
+                      // GARANTIR FOCO NO WEBVIEW
+                      // ==================================
+                      webView.setFocusable(true);
+                      webView.setFocusableInTouchMode(true);
+                      webView.requestFocus();
                   }
               }
           }
@@ -499,7 +520,7 @@ jobs:
 
 
       # ==================================================
-      # 9 - COPIAR OS ARQUIVOS PARA ANDROID
+      # 9 - COPIAR WEB PARA ANDROID
       # ==================================================
       - name: Copiar arquivos
         run: |
@@ -507,7 +528,7 @@ jobs:
 
 
       # ==================================================
-      # 10 - FORÇAR VERSÕES DO KOTLIN
+      # 10 - KOTLIN
       # ==================================================
       - name: Corrigir Kotlin
         run: |
@@ -553,7 +574,7 @@ jobs:
       # ==================================================
       # 13 - GRADLE
       # ==================================================
-      - name: Permitir Gradle
+      - name: Dar permissão ao Gradle
         run: |
           chmod +x android/gradlew
 
@@ -577,11 +598,11 @@ jobs:
 
 
       # ==================================================
-      # 16 - MOSTRAR APK
+      # 16 - VERIFICAR
       # ==================================================
       - name: Verificar APK
         run: |
-          echo "APKs encontrados:"
+          echo "APK encontrado:"
           find android/app/build/outputs/apk \
             -type f \
             -name "*.apk" \
@@ -589,11 +610,11 @@ jobs:
 
 
       # ==================================================
-      # 17 - ENVIAR APK
+      # 17 - PUBLICAR
       # ==================================================
       - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
-          name: carga-dutra-v3-99999
+          name: carga-dutra-v4-mobile-99999
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
